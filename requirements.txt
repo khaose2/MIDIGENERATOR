@@ -1,0 +1,20 @@
+# MIDI Generator Requirements
+
+# Core MIDI and Audio Libraries
+mido>=1.2.10
+pygame>=2.1.0
+pretty-midi>=0.2.9
+
+# Visualization and GUI
+matplotlib>=3.5.0
+numpy>=1.21.0
+scipy>=1.7.0
+
+# Audio Processing (optional, for advanced features)
+pyaudio>=0.2.11
+
+# Additional utilities
+colorsys
+
+# Note: tkinter comes with Python standard library
+# Note: threading, random, json, time, os, dataclasses, typing are standard library modules
