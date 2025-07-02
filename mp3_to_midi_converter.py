@@ -833,29 +833,7 @@ class MP3ToMIDIConverter:
             'issues': issues,
             'note_density': notes_per_second
         }
-
-
-
-# Standalone conversion function
-def convert_mp3_to_midi_simple(mp3_path: str, midi_path: str, algorithm: str = 'cqt') -> bool:
-    """Simple function for MP3 to MIDI conversion"""
-    converter = MP3ToMIDIConverter()
-    return converter.convert_mp3_to_midi(mp3_path, midi_path, algorithm)
-
-
-if __name__ == "__main__":
-    import random
     
-    print("🎵 MP3 to MIDI Converter Test")
-    
-    # Example usage
-    converter = MP3ToMIDIConverter()
-    
-    # Test with a hypothetical MP3 file
-    # converter.convert_mp3_to_midi("test.mp3", "output.mid", "cqt")
-    
-    print("✅ MP3 to MIDI Converter ready for use!")
-
     def generate_inspired_melody(self, analysis: dict, duration: float = 30.0, 
                                 style: str = 'similar') -> List[dict]:
         """Generate new melody inspired by audio analysis characteristics"""
@@ -1183,3 +1161,24 @@ if __name__ == "__main__":
                 new_note['duration'] *= 0.5
             varied.append(new_note)
         return varied
+    
+
+# Standalone conversion function
+def convert_mp3_to_midi_simple(mp3_path: str, midi_path: str, algorithm: str = 'cqt') -> bool:
+    """Simple function for MP3 to MIDI conversion"""
+    converter = MP3ToMIDIConverter()
+    return converter.convert_mp3_to_midi(mp3_path, midi_path, algorithm)
+
+
+if __name__ == "__main__":
+    import random
+    
+    print("🎵 MP3 to MIDI Converter Test")
+    
+    # Example usage
+    converter = MP3ToMIDIConverter()
+    
+    # Test with a hypothetical MP3 file
+    # converter.convert_mp3_to_midi("test.mp3", "output.mid", "cqt")
+    
+    print("✅ MP3 to MIDI Converter ready for use!")

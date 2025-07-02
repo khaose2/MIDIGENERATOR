@@ -4,7 +4,7 @@ Advanced MIDI generation with real-time audio synthesis
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, colorchooser
+from tkinter import ttk, filedialog, messagebox, colorchooser, scrolledtext
 import pygame
 import mido
 import numpy as np
@@ -32,6 +32,15 @@ try:
 except ImportError as e:
     MP3_CONVERSION_AVAILABLE = False
     print(f"⚠️ MP3 conversion disabled - missing dependencies: {e}")
+
+# Import digital keyboard
+try:
+    from digital_keyboard import DigitalKeyboard, DigitalKeyboardWindow
+    DIGITAL_KEYBOARD_AVAILABLE = True
+    print("✅ Digital Keyboard available")
+except ImportError as e:
+    DIGITAL_KEYBOARD_AVAILABLE = False
+    print(f"⚠️ Digital Keyboard disabled - missing dependencies: {e}")
 
 # Initialize pygame mixer for audio playback
 pygame.mixer.pre_init(frequency=44100, size=-16, channels=2, buffer=512)
@@ -511,6 +520,12 @@ class MIDIGeneratorGUI:
         self.create_settings_tab()
         self.create_advanced_tab()
         self.create_audio_tab()
+        if DIGITAL_KEYBOARD_AVAILABLE:
+            self.create_keyboard_tab()
+        
+        # Create creative generation tab if MP3 conversion is available
+        if MP3_CONVERSION_AVAILABLE:
+            self.create_creative_tab()
         
         # Status bar
         self.status_var = tk.StringVar(value="Ready - All audio systems operational")
@@ -547,6 +562,11 @@ class MIDIGeneratorGUI:
         self.volume_var = tk.DoubleVar(value=0.7)
         self.filter_cutoff_var = tk.DoubleVar(value=20000)
         self.stereo_width_var = tk.DoubleVar(value=0.5)
+        
+        # Additional MIDI settings for settings tab
+        self.velocity_var = tk.IntVar(value=80)
+        self.channel_var = tk.IntVar(value=1)
+        self.num_notes_var = tk.IntVar(value=50)
     
     def create_main_tab(self):
         """Create the main control tab"""
@@ -640,6 +660,12 @@ class MIDIGeneratorGUI:
                                  font=("Arial", 10), width=18)
         batch_mp3_btn.pack(side="left", padx=5)
         
+        if DIGITAL_KEYBOARD_AVAILABLE:
+            keyboard_btn = tk.Button(file_btn_frame, text="🎹 Digital Keyboard", 
+                                   command=self.open_keyboard_tab,
+                                   font=("Arial", 10), bg="#9b59b6", fg="white", width=15)
+            keyboard_btn.pack(side="left", padx=5)
+        
         # Visualization frame
         viz_frame = ttk.LabelFrame(main_frame, text="Piano Roll Visualization", padding=10)
         viz_frame.pack(pady=10, padx=20, fill="both", expand=True)
@@ -693,7 +719,675 @@ class MIDIGeneratorGUI:
             print(f"Error stopping music: {e}")
     
     # === HANDLER FUNCTIONS FOR GUI CONTROLS ===
+
+    def create_settings_tab(self):
+        """Create the settings configuration tab"""
+        settings_frame = ttk.Frame(self.notebook)
+        self.notebook.add(settings_frame, text="Settings")
+        
+        # Title
+        title_label = tk.Label(settings_frame, text="⚙️ Application Settings", 
+                              font=("Arial", 16, "bold"))
+        title_label.pack(pady=20)
+        
+        # Create scrollable content
+        canvas = tk.Canvas(settings_frame)
+        scrollbar = ttk.Scrollbar(settings_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack the canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Bind mousewheel to canvas
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
     
+        # Audio Settings
+        audio_frame = ttk.LabelFrame(scrollable_frame, text="Audio Settings", padding=10)
+        audio_frame.pack(fill="x", padx=20, pady=10)
+        
+        # Volume control
+        volume_frame = tk.Frame(audio_frame)
+        volume_frame.pack(fill="x", pady=5)
+        tk.Label(volume_frame, text="Master Volume:", font=("Arial", 10, "bold")).pack(side="left")
+        volume_scale = tk.Scale(volume_frame, from_=0.0, to=1.0, resolution=0.1, 
+                               orient="horizontal", variable=self.volume_var,
+                               command=self.update_volume)
+        volume_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        
+        # Filter cutoff
+        filter_frame = tk.Frame(audio_frame)
+        filter_frame.pack(fill="x", pady=5)
+        tk.Label(filter_frame, text="Filter Cutoff (Hz):", font=("Arial", 10, "bold")).pack(side="left")
+        filter_scale = tk.Scale(filter_frame, from_=100, to=20000, resolution=100, 
+                               orient="horizontal", variable=self.filter_cutoff_var,
+                               command=self.update_filter)
+        filter_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        
+        # Stereo width
+        stereo_frame = tk.Frame(audio_frame)
+        stereo_frame.pack(fill="x", pady=5)
+        tk.Label(stereo_frame, text="Stereo Width:", font=("Arial", 10, "bold")).pack(side="left")
+        stereo_scale = tk.Scale(stereo_frame, from_=0.0, to=1.0, resolution=0.1, 
+                               orient="horizontal", variable=self.stereo_width_var,
+                               command=self.update_stereo_width)
+        stereo_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        
+        # MIDI Settings
+        midi_frame = ttk.LabelFrame(scrollable_frame, text="MIDI Settings", padding=10)
+        midi_frame.pack(fill="x", padx=20, pady=10)
+        
+        # Default velocity
+        velocity_frame = tk.Frame(midi_frame)
+        velocity_frame.pack(fill="x", pady=5)
+        tk.Label(velocity_frame, text="Default Velocity:", font=("Arial", 10, "bold")).pack(side="left")
+        velocity_scale = tk.Scale(velocity_frame, from_=1, to=127, resolution=1, 
+                                 orient="horizontal", variable=self.velocity_var)
+        velocity_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        
+        # Default channel
+        channel_frame = tk.Frame(midi_frame)
+        channel_frame.pack(fill="x", pady=5)
+        tk.Label(channel_frame, text="MIDI Channel:", font=("Arial", 10, "bold")).pack(side="left")
+        channel_scale = tk.Scale(channel_frame, from_=1, to=16, resolution=1, 
+                                orient="horizontal", variable=self.channel_var)
+        channel_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        
+        # Generation Settings
+        gen_frame = ttk.LabelFrame(scrollable_frame, text="Generation Settings", padding=10)
+        gen_frame.pack(fill="x", padx=20, pady=10)
+        
+        # Number of notes
+        notes_frame = tk.Frame(gen_frame)
+        notes_frame.pack(fill="x", pady=5)
+        tk.Label(notes_frame, text="Number of Notes:", font=("Arial", 10, "bold")).pack(side="left")
+        notes_scale = tk.Scale(notes_frame, from_=10, to=200, resolution=5, 
+                              orient="horizontal", variable=self.num_notes_var)
+        notes_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        
+        # Tempo
+        tempo_frame = tk.Frame(gen_frame)
+        tempo_frame.pack(fill="x", pady=5)
+        tk.Label(tempo_frame, text="Tempo (BPM):", font=("Arial", 10, "bold")).pack(side="left")
+        tempo_scale = tk.Scale(tempo_frame, from_=60, to=200, resolution=5, 
+                              orient="horizontal", variable=self.tempo_var,
+                              command=self.update_tempo)
+        tempo_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        
+        # Application Settings
+        app_frame = ttk.LabelFrame(scrollable_frame, text="Application Settings", padding=10)
+        app_frame.pack(fill="x", padx=20, pady=10)
+        
+        # Auto-save checkbox
+        auto_save_frame = tk.Frame(app_frame)
+        auto_save_frame.pack(fill="x", pady=5)
+        self.auto_save_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(auto_save_frame, text="Auto-save generated MIDI files", 
+                      variable=self.auto_save_var, font=("Arial", 10)).pack(side="left")
+        
+        # Show tooltips checkbox
+        tooltips_frame = tk.Frame(app_frame)
+        tooltips_frame.pack(fill="x", pady=5)
+        self.show_tooltips_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(tooltips_frame, text="Show helpful tooltips", 
+                      variable=self.show_tooltips_var, font=("Arial", 10)).pack(side="left")
+        
+        # Theme selection
+        theme_frame = tk.Frame(app_frame)
+        theme_frame.pack(fill="x", pady=5)
+        tk.Label(theme_frame, text="Theme:", font=("Arial", 10, "bold")).pack(side="left")
+        self.theme_var = tk.StringVar(value="Default")
+        theme_menu = ttk.Combobox(theme_frame, textvariable=self.theme_var, 
+                                 values=["Default", "Dark", "Light", "Colorful"], 
+                                 state="readonly")
+        theme_menu.pack(side="right", padx=(10, 0))
+        
+        # Pack the canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Bind mousewheel to canvas
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+    
+    def create_advanced_tab(self):
+        """Create the advanced features tab"""
+        advanced_frame = ttk.Frame(self.notebook)
+        self.notebook.add(advanced_frame, text="Advanced")
+        
+        # Title
+        title_label = tk.Label(advanced_frame, text="🚀 Advanced Features", 
+                              font=("Arial", 16, "bold"))
+        title_label.pack(pady=20)
+        
+        # Create scrollable content
+        canvas = tk.Canvas(advanced_frame)
+        scrollbar = ttk.Scrollbar(advanced_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack the canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Bind mousewheel to canvas
+        def on_mousewheel_advanced(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel_advanced)
+    
+        # AI-Powered Generation
+        ai_frame = ttk.LabelFrame(scrollable_frame, text="AI-Powered Generation", padding=10)
+        ai_frame.pack(fill="x", padx=20, pady=10)
+        
+        # Neural network style generation
+        tk.Label(ai_frame, text="Neural Network Style:", font=("Arial", 10, "bold")).pack(anchor="w")
+        self.ai_style_var = tk.StringVar(value="Classical")
+        ai_style_frame = tk.Frame(ai_frame)
+        ai_style_frame.pack(fill="x", pady=5)
+        
+        styles = ["Classical", "Jazz", "Blues", "Rock", "Ambient", "Electronic"]
+        for i, style in enumerate(styles):
+            tk.Radiobutton(ai_style_frame, text=style, variable=self.ai_style_var, 
+                          value=style, font=("Arial", 9)).pack(side="left", padx=5)
+        
+        # AI generation controls
+        ai_controls_frame = tk.Frame(ai_frame)
+        ai_controls_frame.pack(fill="x", pady=10)
+        
+        tk.Button(ai_controls_frame, text="🧠 Generate AI Music", 
+                 command=self.generate_ai_music, font=("Arial", 11, "bold"),
+                 bg="#9C27B0", fg="white").pack(side="left", padx=5)
+        
+        tk.Button(ai_controls_frame, text="🎭 Style Transfer", 
+                 command=self.style_transfer, font=("Arial", 11),
+                 bg="#673AB7", fg="white").pack(side="left", padx=5)
+        
+        # Advanced Synthesis
+        synth_frame = ttk.LabelFrame(scrollable_frame, text="Advanced Synthesis", padding=10)
+        synth_frame.pack(fill="x", padx=20, pady=10)
+        
+        # Wavetable synthesis
+        wave_frame = tk.Frame(synth_frame)
+        wave_frame.pack(fill="x", pady=5)
+        tk.Label(wave_frame, text="Wavetable:", font=("Arial", 10, "bold")).pack(side="left")
+        
+        self.wavetable_var = tk.StringVar(value="Sawtooth")
+        wavetable_menu = ttk.Combobox(wave_frame, textvariable=self.wavetable_var,
+                                     values=["Sine", "Sawtooth", "Square", "Triangle", "Noise"], 
+                                     state="readonly")
+        wavetable_menu.pack(side="right", padx=(10, 0))
+        
+        # FM synthesis parameters
+        fm_frame = tk.Frame(synth_frame)
+        fm_frame.pack(fill="x", pady=5)
+        tk.Label(fm_frame, text="FM Modulation Depth:", font=("Arial", 10, "bold")).pack(side="left")
+        
+        self.fm_depth_var = tk.DoubleVar(value=0.5)
+        fm_scale = tk.Scale(fm_frame, from_=0.0, to=2.0, resolution=0.1, 
+                           orient="horizontal", variable=self.fm_depth_var)
+        fm_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        
+        # Advanced Effects
+        effects_frame = ttk.LabelFrame(scrollable_frame, text="Advanced Effects", padding=10)
+        effects_frame.pack(fill="x", padx=20, pady=10)
+        
+        # Reverb controls
+        reverb_frame = tk.Frame(effects_frame)
+        reverb_frame.pack(fill="x", pady=5)
+        tk.Label(reverb_frame, text="Reverb Size:", font=("Arial", 10, "bold")).pack(side="left")
+        
+        self.reverb_size_var = tk.DoubleVar(value=0.3)
+        reverb_scale = tk.Scale(reverb_frame, from_=0.0, to=1.0, resolution=0.1, 
+                               orient="horizontal", variable=self.reverb_size_var)
+        reverb_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        
+        # Delay controls
+        delay_frame = tk.Frame(effects_frame)
+        delay_frame.pack(fill="x", pady=5)
+        tk.Label(delay_frame, text="Delay Time (ms):", font=("Arial", 10, "bold")).pack(side="left")
+        
+        self.delay_time_var = tk.IntVar(value=250)
+        delay_scale = tk.Scale(delay_frame, from_=50, to=1000, resolution=50, 
+                              orient="horizontal", variable=self.delay_time_var)
+        delay_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        
+        # Algorithmic Composition
+        algo_frame = ttk.LabelFrame(scrollable_frame, text="Algorithmic Composition", padding=10)
+        algo_frame.pack(fill="x", padx=20, pady=10)
+        
+        # Markov chain generation
+        tk.Label(algo_frame, text="Markov Chain Order:", font=("Arial", 10, "bold")).pack(anchor="w")
+        self.markov_order_var = tk.IntVar(value=2)
+        markov_frame = tk.Frame(algo_frame)
+        markov_frame.pack(fill="x", pady=5)
+        
+        for order in range(1, 5):
+            tk.Radiobutton(markov_frame, text=f"Order {order}", variable=self.markov_order_var, 
+                          value=order, font=("Arial", 9)).pack(side="left", padx=10)
+        
+        # Algorithm controls
+        algo_controls_frame = tk.Frame(algo_frame)
+        algo_controls_frame.pack(fill="x", pady=10)
+        
+        tk.Button(algo_controls_frame, text="🔀 Markov Generation", 
+                 command=self.generate_markov, font=("Arial", 11),
+                 bg="#FF5722", fg="white").pack(side="left", padx=5)
+        
+        tk.Button(algo_controls_frame, text="🌐 Cellular Automata", 
+                 command=self.generate_cellular, font=("Arial", 11),
+                 bg="#795548", fg="white").pack(side="left", padx=5)
+        
+        # Pack the canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Bind mousewheel to canvas
+        def on_mousewheel_audio(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel_audio)
+    
+    def test_note(self, note):
+        """Test a single note with current settings"""
+        try:
+            # Create a simple test note
+            test_midi = mido.MidiFile()
+            track = mido.MidiTrack()
+            test_midi.tracks.append(track)
+            
+            # Add note on and off messages
+            track.append(mido.Message('note_on', note=note, velocity=80, time=0))
+            track.append(mido.Message('note_off', note=note, velocity=0, time=480))
+            
+            self.synthesizer.play_midi_data(test_midi)
+            self.status_var.set(f"Testing note {note}")
+            
+        except Exception as e:
+            self.status_var.set(f"Test note error: {str(e)}")
+    
+    def test_chord(self):
+        """Test a chord with current settings"""
+        try:
+            # Create a simple test chord (C major)
+            test_midi = mido.MidiFile()
+            track = mido.MidiTrack()
+            test_midi.tracks.append(track)
+            
+            # Add chord notes
+            chord_notes = [60, 64, 67]  # C, E, G
+            for note in chord_notes:
+                track.append(mido.Message('note_on', note=note, velocity=70, time=0))
+            
+            for note in chord_notes:
+                track.append(mido.Message('note_off', note=note, velocity=0, time=480))
+            
+            self.synthesizer.play_midi_data(test_midi)
+            self.status_var.set("Testing C major chord")
+            
+        except Exception as e:
+            self.status_var.set(f"Test chord error: {str(e)}")
+    
+    def apply_audio_settings(self):
+        """Apply current audio settings to the synthesizer"""
+        try:
+            # Apply ADSR settings
+            if hasattr(self.synthesizer, 'set_adsr'):
+                self.synthesizer.set_adsr(
+                    attack=self.attack_var.get(),
+                    decay=self.decay_var.get(),
+                    sustain=self.sustain_var.get(),
+                    release=self.release_var.get()
+                )
+            
+            # Apply filter settings
+            if hasattr(self.synthesizer, 'set_filter'):
+                self.synthesizer.set_filter(
+                    filter_type=self.filter_type_var.get(),
+                    cutoff=self.filter_cutoff_var.get()
+                )
+            
+            # Apply effects
+            if hasattr(self.synthesizer, 'set_effects'):
+                self.synthesizer.set_effects(
+                    reverb=self.reverb_enabled_var.get(),
+                    reverb_amount=self.reverb_size_var.get(),
+                    delay=self.delay_enabled_var.get(),
+                    delay_time=self.delay_time_var.get(),
+                    distortion=self.distortion_enabled_var.get(),
+                    distortion_amount=self.distortion_amount_var.get()
+                )
+            
+            self.status_var.set("Audio settings applied successfully!")
+            
+        except Exception as e:
+            self.status_var.set(f"Error applying audio settings: {str(e)}")
+
+    def update_volume(self, value):
+        """Update master volume"""
+        try:
+            volume = float(value)
+            if hasattr(self.synthesizer, 'set_master_volume'):
+                self.synthesizer.set_master_volume(volume)
+            self.status_var.set(f"Volume set to {volume:.1f}")
+        except Exception as e:
+            print(f"Error updating volume: {e}")
+    
+    def update_filter(self, value):
+        """Update filter cutoff"""
+        try:
+            cutoff = float(value)
+            if hasattr(self.synthesizer, 'set_filter_cutoff'):
+                self.synthesizer.set_filter_cutoff(cutoff)
+            self.status_var.set(f"Filter cutoff set to {cutoff:.0f} Hz")
+        except Exception as e:
+            print(f"Error updating filter: {e}")
+    
+    def update_stereo_width(self, value):
+        """Update stereo width"""
+        try:
+            width = float(value)
+            if hasattr(self.synthesizer, 'set_stereo_width'):
+                self.synthesizer.set_stereo_width(width)
+            self.status_var.set(f"Stereo width set to {width:.1f}")
+        except Exception as e:
+            print(f"Error updating stereo width: {e}")
+
+    def create_keyboard_tab(self):
+        """Create the digital keyboard tab"""
+        keyboard_frame = ttk.Frame(self.notebook)
+        self.notebook.add(keyboard_frame, text="🎹 Digital Keyboard")
+        
+        # Initialize the digital keyboard
+        try:
+            self.digital_keyboard = DigitalKeyboard(keyboard_frame, self.synthesizer)
+            print("✅ Digital Keyboard tab created successfully")
+        except Exception as e:
+            # Fallback UI if keyboard creation fails
+            tk.Label(keyboard_frame, text="🎹 Digital Keyboard", 
+                    font=("Arial", 16, "bold")).pack(pady=20)
+            tk.Label(keyboard_frame, text="Digital Keyboard failed to initialize:", 
+                    font=("Arial", 12)).pack(pady=10)
+            tk.Label(keyboard_frame, text=str(e), 
+                    font=("Arial", 10), wraplength=400, justify="center").pack(pady=5)
+            
+            # Add a button to try launching in separate window
+            tk.Button(keyboard_frame, text="🎹 Open in Separate Window", 
+                     command=self.open_keyboard_window,
+                     font=("Arial", 12), bg="#9b59b6", fg="white").pack(pady=20)
+            
+            print(f"❌ Digital Keyboard tab creation failed: {e}")
+    
+    def open_keyboard_tab(self):
+        """Switch to the keyboard tab"""
+        if DIGITAL_KEYBOARD_AVAILABLE and hasattr(self, 'digital_keyboard'):
+            # Switch to keyboard tab
+            for i in range(self.notebook.index("end")):
+                if self.notebook.tab(i, "text") == "🎹 Digital Keyboard":
+                    self.notebook.select(i)
+                    break
+            self.status_var.set("Switched to Digital Keyboard")
+        else:
+            self.open_keyboard_window()
+    
+    def open_keyboard_window(self):
+        """Open digital keyboard in a separate window"""
+        try:
+            from digital_keyboard import DigitalKeyboardWindow
+            keyboard_window = DigitalKeyboardWindow(self.synthesizer)
+            self.status_var.set("Digital Keyboard opened in separate window")
+        except Exception as e:
+            messagebox.showerror("Keyboard Error", f"Failed to open digital keyboard: {e}")
+            self.status_var.set(f"Keyboard error: {e}")
+
+    def create_audio_tab(self):
+        """Create the audio synthesis tab (placeholder)"""
+        audio_frame = ttk.Frame(self.notebook)
+        self.notebook.add(audio_frame, text="🔊 Audio")
+        
+        # Title
+        title_label = tk.Label(audio_frame, text="🔊 Audio Synthesis", 
+                              font=("Arial", 16, "bold"))
+        title_label.pack(pady=20)
+        
+        # Audio controls frame
+        controls_frame = ttk.LabelFrame(audio_frame, text="Audio Controls", padding=10)
+        controls_frame.pack(pady=10, padx=20, fill="x")
+        
+        # Master volume
+        volume_frame = tk.Frame(controls_frame)
+        volume_frame.pack(fill="x", pady=5)
+        tk.Label(volume_frame, text="Master Volume:", width=15, anchor="w").pack(side="left")
+        volume_scale = tk.Scale(volume_frame, from_=0.0, to=1.0, resolution=0.1,
+                              orient="horizontal", variable=self.volume_var,
+                              command=self.update_volume)
+        volume_scale.pack(side="left", fill="x", expand=True)
+        
+        # Test buttons
+        test_frame = ttk.LabelFrame(audio_frame, text="Audio Tests", padding=10)
+        test_frame.pack(pady=10, padx=20, fill="x")
+        
+        test_btn_frame = tk.Frame(test_frame)
+        test_btn_frame.pack(fill="x")
+        
+        tk.Button(test_btn_frame, text="Test Note C4", 
+                 command=lambda: self.test_note(60),
+                 font=("Arial", 10), width=12).pack(side="left", padx=5)
+        
+        tk.Button(test_btn_frame, text="Test Chord", 
+                 command=self.test_chord,
+                 font=("Arial", 10), width=12).pack(side="left", padx=5)
+        
+        print("✅ Audio tab created")
+    
+    def test_note(self, note):
+        """Test a single note"""
+        try:
+            self.synthesizer.note_on(0, note, 80)
+            self.root.after(500, lambda: self.synthesizer.note_off(0, note))
+            self.status_var.set(f"Testing note {note}")
+        except Exception as e:
+            self.status_var.set(f"Test note error: {str(e)}")
+    
+    def test_chord(self):
+        """Test a chord"""
+        try:
+            chord_notes = [60, 64, 67]  # C major
+            for note in chord_notes:
+                self.synthesizer.note_on(0, note, 70)
+            self.root.after(1000, lambda: [self.synthesizer.note_off(0, note) for note in chord_notes])
+            self.status_var.set("Testing C major chord")
+        except Exception as e:
+            self.status_var.set(f"Test chord error: {str(e)}")
+    
+    def apply_audio_settings(self):
+        """Apply current audio settings to the synthesizer"""
+        try:
+            # Apply ADSR settings
+            if hasattr(self.synthesizer, 'set_adsr'):
+                self.synthesizer.set_adsr(
+                    attack=self.attack_var.get(),
+                    decay=self.decay_var.get(),
+                    sustain=self.sustain_var.get(),
+                    release=self.release_var.get()
+                )
+            
+            # Apply filter settings
+            if hasattr(self.synthesizer, 'set_filter'):
+                self.synthesizer.set_filter(
+                    filter_type=self.filter_type_var.get(),
+                    cutoff=self.filter_cutoff_var.get()
+                )
+            
+            # Apply effects
+            if hasattr(self.synthesizer, 'set_effects'):
+                self.synthesizer.set_effects(
+                    reverb=self.reverb_enabled_var.get(),
+                    reverb_amount=self.reverb_size_var.get(),
+                    delay=self.delay_enabled_var.get(),
+                    delay_time=self.delay_time_var.get(),
+                    distortion=self.distortion_enabled_var.get(),
+                    distortion_amount=self.distortion_amount_var.get()
+                )
+            
+            self.status_var.set("Audio settings applied successfully!")
+            
+        except Exception as e:
+            self.status_var.set(f"Error applying audio settings: {str(e)}")
+
+    def update_volume(self, value):
+        """Update master volume"""
+        try:
+            volume = float(value)
+            if hasattr(self.synthesizer, 'set_master_volume'):
+                self.synthesizer.set_master_volume(volume)
+            self.status_var.set(f"Volume set to {volume:.1f}")
+        except Exception as e:
+            print(f"Error updating volume: {e}")
+    
+    def update_filter(self, value):
+        """Update filter cutoff"""
+        try:
+            cutoff = float(value)
+            if hasattr(self.synthesizer, 'set_filter_cutoff'):
+                self.synthesizer.set_filter_cutoff(cutoff)
+            self.status_var.set(f"Filter cutoff set to {cutoff:.0f} Hz")
+        except Exception as e:
+            print(f"Error updating filter: {e}")
+    
+    def update_stereo_width(self, value):
+        """Update stereo width"""
+        try:
+            width = float(value)
+            if hasattr(self.synthesizer, 'set_stereo_width'):
+                self.synthesizer.set_stereo_width(width)
+            self.status_var.set(f"Stereo width set to {width:.1f}")
+        except Exception as e:
+            print(f"Error updating stereo width: {e}")
+
+    def create_keyboard_tab(self):
+        """Create the digital keyboard tab"""
+        keyboard_frame = ttk.Frame(self.notebook)
+        self.notebook.add(keyboard_frame, text="🎹 Digital Keyboard")
+        
+        # Initialize the digital keyboard
+        try:
+            self.digital_keyboard = DigitalKeyboard(keyboard_frame, self.synthesizer)
+            print("✅ Digital Keyboard tab created successfully")
+        except Exception as e:
+            # Fallback UI if keyboard creation fails
+            tk.Label(keyboard_frame, text="🎹 Digital Keyboard", 
+                    font=("Arial", 16, "bold")).pack(pady=20)
+            tk.Label(keyboard_frame, text="Digital Keyboard failed to initialize:", 
+                    font=("Arial", 12)).pack(pady=10)
+            tk.Label(keyboard_frame, text=str(e), 
+                    font=("Arial", 10), wraplength=400, justify="center").pack(pady=5)
+            
+            # Add a button to try launching in separate window
+            tk.Button(keyboard_frame, text="🎹 Open in Separate Window", 
+                     command=self.open_keyboard_window,
+                     font=("Arial", 12), bg="#9b59b6", fg="white").pack(pady=20)
+            
+            print(f"❌ Digital Keyboard tab creation failed: {e}")
+    
+    def open_keyboard_tab(self):
+        """Switch to the keyboard tab"""
+        if DIGITAL_KEYBOARD_AVAILABLE and hasattr(self, 'digital_keyboard'):
+            # Switch to keyboard tab
+            for i in range(self.notebook.index("end")):
+                if self.notebook.tab(i, "text") == "🎹 Digital Keyboard":
+                    self.notebook.select(i)
+                    break
+            self.status_var.set("Switched to Digital Keyboard")
+        else:
+            self.open_keyboard_window()
+    
+    def open_keyboard_window(self):
+        """Open digital keyboard in a separate window"""
+        try:
+            from digital_keyboard import DigitalKeyboardWindow
+            keyboard_window = DigitalKeyboardWindow(self.synthesizer)
+            self.status_var.set("Digital Keyboard opened in separate window")
+        except Exception as e:
+            messagebox.showerror("Keyboard Error", f"Failed to open digital keyboard: {e}")
+            self.status_var.set(f"Keyboard error: {e}")
+
+    def create_audio_tab(self):
+        """Create the audio synthesis tab (placeholder)"""
+        audio_frame = ttk.Frame(self.notebook)
+        self.notebook.add(audio_frame, text="🔊 Audio")
+        
+        # Title
+        title_label = tk.Label(audio_frame, text="🔊 Audio Synthesis", 
+                              font=("Arial", 16, "bold"))
+        title_label.pack(pady=20)
+        
+        # Audio controls frame
+        controls_frame = ttk.LabelFrame(audio_frame, text="Audio Controls", padding=10)
+        controls_frame.pack(pady=10, padx=20, fill="x")
+        
+        # Master volume
+        volume_frame = tk.Frame(controls_frame)
+        volume_frame.pack(fill="x", pady=5)
+        tk.Label(volume_frame, text="Master Volume:", width=15, anchor="w").pack(side="left")
+        volume_scale = tk.Scale(volume_frame, from_=0.0, to=1.0, resolution=0.1,
+                              orient="horizontal", variable=self.volume_var,
+                              command=self.update_volume)
+        volume_scale.pack(side="left", fill="x", expand=True)
+        
+        # Test buttons
+        test_frame = ttk.LabelFrame(audio_frame, text="Audio Tests", padding=10)
+        test_frame.pack(pady=10, padx=20, fill="x")
+        
+        test_btn_frame = tk.Frame(test_frame)
+        test_btn_frame.pack(fill="x")
+        
+        tk.Button(test_btn_frame, text="Test Note C4", 
+                 command=lambda: self.test_note(60),
+                 font=("Arial", 10), width=12).pack(side="left", padx=5)
+        
+        tk.Button(test_btn_frame, text="Test Chord", 
+                 command=self.test_chord,
+                 font=("Arial", 10), width=12).pack(side="left", padx=5)
+        
+        print("✅ Audio tab created")
+    
+    def test_note(self, note):
+        """Test a single note"""
+        try:
+            self.synthesizer.note_on(0, note, 80)
+            self.root.after(500, lambda: self.synthesizer.note_off(0, note))
+            self.status_var.set(f"Testing note {note}")
+        except Exception as e:
+            self.status_var.set(f"Test note error: {str(e)}")
+    
+    def test_chord(self):
+        """Test a chord"""
+        try:
+            chord_notes = [60, 64, 67]  # C major
+            for note in chord_notes:
+                self.synthesizer.note_on(0, note, 70)
+            self.root.after(1000, lambda: [self.synthesizer.note_off(0, note) for note in chord_notes])
+            self.status_var.set("Testing C major chord")
+        except Exception as e:
+            self.status_var.set(f"Test chord error: {str(e)}")
+
     def update_tempo(self, value):
         """Called when the tempo slider is changed."""
         self.generator.settings.tempo = self.tempo_var.get()
@@ -900,15 +1594,303 @@ class MIDIGeneratorGUI:
         self.show_mp3_conversion_dialog(mp3_path)
     
     def show_mp3_conversion_dialog(self, mp3_path):
-        """Show enhanced MP3 conversion options dialog with advanced features"""
+        """Enhanced MP3 conversion dialog with scrollable content and generate button at top"""
         dialog = tk.Toplevel(self.root)
-        dialog.title("Advanced MP3 to MIDI Conversion")
-        dialog.geometry("600x850")
-        dialog.resizable(False, False)
-        dialog.grab_set()  # Make dialog modal
+        dialog.title("MP3 to MIDI Conversion")
+        dialog.geometry("700x600")  # Reduced height
+        dialog.resizable(True, True)  # Allow resizing
+        dialog.grab_set()
+        dialog.transient(self.root)
         
         # Center the dialog
-        dialog.transient(self.root)
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (700 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (600 // 2)
+        dialog.geometry(f"700x600+{x}+{y}")
+        
+        # Initialize variables at the beginning
+        progress_var = tk.StringVar(value="Ready to convert...")
+        algorithm_var = tk.StringVar(value="cqt")
+        sensitivity_var = tk.DoubleVar(value=0.5)
+        tempo_var = tk.IntVar(value=120)
+        replace_var = tk.BooleanVar(value=True)
+        min_duration_var = tk.DoubleVar(value=0.1)
+        
+        # Create main frame with scrollbar
+        main_frame = tk.Frame(dialog)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Title with file info
+        title_frame = tk.Frame(main_frame)
+        title_frame.pack(pady=10, padx=10, fill="x")
+        
+        title_label = tk.Label(title_frame, text="🎵 MP3 to MIDI Converter", 
+                              font=("Arial", 16, "bold"))
+        title_label.pack()
+        
+        file_label = tk.Label(title_frame, text=f"File: {os.path.basename(mp3_path)}", 
+                             wraplength=600, justify="center", font=("Arial", 10))
+        file_label.pack(pady=5)
+        
+        # === TOP SECTION: CREATIVE GENERATION (MOVED TO TOP) ===
+        generation_frame = ttk.LabelFrame(main_frame, text="🎨 Creative Generation", padding=8)
+        generation_frame.pack(pady=10, padx=20, fill="x")
+        
+        gen_info_label = tk.Label(generation_frame, 
+                                 text="Generate new music inspired by this audio file:", 
+                                 font=("Arial", 10, "bold"), fg="darkblue")
+        gen_info_label.pack(anchor="w")
+        
+        # Generation controls in organized layout
+        gen_controls_frame = tk.Frame(generation_frame)
+        gen_controls_frame.pack(fill="x", pady=8)
+        
+        # Style selection
+        style_frame = tk.Frame(gen_controls_frame)
+        style_frame.pack(side="left", padx=(0, 20))
+        tk.Label(style_frame, text="Style:", font=("Arial", 9, "bold")).pack(anchor="w")
+        style_combo = ttk.Combobox(style_frame, textvariable=self.style_var, 
+                                  values=["similar", "jazz", "classical", "ambient", "creative"],
+                                  state="readonly", width=12, font=("Arial", 9))
+        style_combo.pack(pady=2)
+        
+        # Duration selection
+        duration_frame = tk.Frame(gen_controls_frame)
+        duration_frame.pack(side="left", padx=(0, 20))
+        tk.Label(duration_frame, text="Duration (seconds):", font=("Arial", 9, "bold")).pack(anchor="w")
+        gen_duration_scale = tk.Scale(duration_frame, from_=10, to=60, 
+                                     orient="horizontal", variable=self.gen_duration_var,
+                                     length=120, font=("Arial", 8))
+        gen_duration_scale.pack(pady=2)
+        
+        # Generation buttons - PROMINENT PLACEMENT
+        gen_button_frame = tk.Frame(generation_frame)
+        gen_button_frame.pack(fill="x", pady=8)
+        
+        generate_inspired_btn = tk.Button(gen_button_frame, text="🎨 Generate Inspired Music", 
+                                         command=lambda: self.generate_inspired_music_gui(
+                                             mp3_path, self.style_var.get(), self.gen_duration_var.get(),
+                                             progress_var, progress_bar, analysis_text),
+                                         bg="mediumpurple", fg="white", 
+                                         font=("Arial", 11, "bold"), pady=8)
+        generate_inspired_btn.pack(side="left", padx=5, fill="x", expand=True)
+        
+        generate_variations_btn = tk.Button(gen_button_frame, text="🔄 Create Variations", 
+                                           command=lambda: self.create_variations_gui(
+                                               progress_var, progress_bar, analysis_text),
+                                           bg="darkorange", fg="white", 
+                                           font=("Arial", 11, "bold"), pady=8)
+        generate_variations_btn.pack(side="left", padx=5, fill="x", expand=True)
+        
+        # Separator
+        separator1 = ttk.Separator(main_frame, orient='horizontal')
+        separator1.pack(fill="x", pady=10, padx=20)
+        
+        # Quick Analysis section
+        quick_frame = tk.Frame(main_frame)
+        quick_frame.pack(pady=5, padx=20, fill="x")
+        
+        tk.Label(quick_frame, text="Quick Actions:", font=("Arial", 10, "bold")).pack(anchor="w")
+        
+        quick_button_frame = tk.Frame(quick_frame)
+        quick_button_frame.pack(fill="x", pady=5)
+        
+        analyze_btn = tk.Button(quick_button_frame, text="🔬 Auto-Analyze Audio", 
+                               bg="lightyellow", command=lambda: self.analyze_audio_for_gui(
+                                   mp3_path, algorithm_var, sensitivity_var, analysis_text),
+                               font=("Arial", 9), pady=4)
+        analyze_btn.pack(side="left", padx=5)
+        
+        preview_btn = tk.Button(quick_button_frame, text="🔍 Preview 10s", 
+                               bg="lightblue", command=lambda: self.preview_conversion(
+                                   mp3_path, algorithm_var.get(), tempo_var.get()),
+                               font=("Arial", 9), pady=4)
+        preview_btn.pack(side="left", padx=5)
+        
+        # Progress section (moved up for visibility)
+        progress_frame = ttk.LabelFrame(main_frame, text="Status & Results", padding=8)
+        progress_frame.pack(pady=10, padx=20, fill="x")
+        
+        progress_label = tk.Label(progress_frame, textvariable=progress_var, font=("Arial", 9))
+        progress_label.pack(anchor="w")
+        
+        progress_bar = ttk.Progressbar(progress_frame, mode='determinate')
+        progress_bar.pack(fill="x", pady=2)
+        
+        # Results display
+        analysis_text = tk.Text(progress_frame, height=4, wrap="word", font=("Arial", 8))
+        analysis_text.pack(fill="x", pady=2)
+        analysis_text.insert(1.0, "Ready for audio analysis and generation...")
+        
+        # Separator
+        separator2 = ttk.Separator(main_frame, orient='horizontal')
+        separator2.pack(fill="x", pady=10, padx=20)
+        
+        # Algorithm selection section (moved down)
+        algo_frame = ttk.LabelFrame(main_frame, text="Conversion to MIDI", padding=8)
+        algo_frame.pack(pady=10, padx=20, fill="x")
+        
+        tk.Label(algo_frame, text="If you want to convert to MIDI notes:", 
+                font=("Arial", 9, "italic"), fg="gray").pack(anchor="w")
+        
+        algo_descriptions = {
+            "cqt": {
+                "name": "CQT - Best for melodies",
+                "color": "#3498db"
+            },
+            "chroma": {
+                "name": "Chroma - Best for chords", 
+                "color": "#e74c3c"
+            },
+            "onset": {
+                "name": "Onset - Best for rhythm",
+                "color": "#2ecc71"
+            }
+        }
+        
+        # Compact algorithm selection
+        algo_select_frame = tk.Frame(algo_frame)
+        algo_select_frame.pack(fill="x", pady=5)
+        
+        for algo, info in algo_descriptions.items():
+            radio = tk.Radiobutton(algo_select_frame, text=info["name"], 
+                                  variable=algorithm_var, value=algo,
+                                  font=("Arial", 9), bg=info["color"], 
+                                  activebackground=info["color"])
+            radio.pack(side="left", padx=10)
+        
+        # Compact options
+        options_frame = tk.Frame(algo_frame)
+        options_frame.pack(fill="x", pady=5)
+        
+        # Tempo and sensitivity in one row
+        tk.Label(options_frame, text="Tempo:", font=("Arial", 9)).pack(side="left")
+        tempo_var = tk.IntVar(value=120)
+        tempo_scale = tk.Scale(options_frame, from_=60, to=200, orient="horizontal",
+                              variable=tempo_var, resolution=5, length=100, font=("Arial", 8))
+        tempo_scale.pack(side="left", padx=5)
+        
+        tk.Label(options_frame, text="Sensitivity:", font=("Arial", 9)).pack(side="left", padx=(20,0))
+        sens_scale = tk.Scale(options_frame, from_=0.1, to=1.0, orient="horizontal",
+                             variable=sensitivity_var, resolution=0.1, length=100, font=("Arial", 8))
+        sens_scale.pack(side="left", padx=5)
+        
+        # Replace melody option
+        replace_check = tk.Checkbutton(algo_frame, 
+                                      text="Replace current melody with converted notes",
+                                      variable=replace_var, font=("Arial", 9))
+        replace_check.pack(anchor="w", pady=3)
+        
+        # Main action buttons at bottom
+        button_frame = tk.Frame(main_frame)
+        button_frame.pack(pady=20)
+        
+        def start_conversion():
+            """Enhanced conversion with user settings"""
+            algorithm = algorithm_var.get()
+            tempo = tempo_var.get()
+            replace_melody = replace_var.get()
+            sensitivity = sensitivity_var.get()
+            min_duration = min_duration_var.get()
+            
+            convert_btn.config(state="disabled")
+            cancel_btn.config(text="Close", state="disabled")
+            
+            def progress_callback(progress, message):
+                progress_bar['value'] = progress * 100
+                progress_var.set(message)
+                dialog.update_idletasks()
+            
+            def conversion_worker():
+                try:
+                    if not MP3_CONVERSION_AVAILABLE:
+                        def show_error():
+                            progress_var.set("❌ MP3 conversion libraries not available")
+                            analysis_text.delete(1.0)
+                            analysis_text.insert(tk.END, "Please install: pip install librosa soundfile")
+                            convert_btn.config(state="normal")
+                            cancel_btn.config(state="normal", text="Close")
+                        
+                        dialog.after(0, show_error)
+                        return
+                    
+                    from mp3_to_midi_converter import MP3ToMIDIConverter
+                    
+                    # Create converter with enhanced settings
+                    converter = MP3ToMIDIConverter(progress_callback)
+                    converter.sensitivity = sensitivity
+                    converter.min_duration = min_duration
+                    
+                    temp_midi_path = "temp_converted.mid"
+                    
+                    success = converter.convert_mp3_to_midi(
+                        mp3_path, temp_midi_path, algorithm, tempo
+                    )
+                    
+                    if success and os.path.exists(temp_midi_path):
+                        converted_midi = mido.MidiFile(temp_midi_path)
+                        
+                        if replace_melody:
+                            # Enhanced note extraction
+                            notes_data = self.extract_notes_from_midi(converted_midi)
+                            self.generator.notes_data = notes_data
+                            self.generator.current_midi = converted_midi
+                            
+                            def update_gui():
+                                self.status_var.set(f"MP3 converted! {len(notes_data)} notes generated")
+                                self.update_visualization()
+                                progress_var.set(f"✅ Success! Generated {len(notes_data)} notes")
+                                
+                                # Show results summary
+                                analysis_text.delete(1.0, tk.END)
+                                analysis_text.insert(tk.END, 
+                                    f"Conversion completed successfully!\n"
+                                    f"Algorithm: {algorithm.upper()}\n"
+                                    f"Notes: {len(notes_data)}, Duration: {max(n['start'] + n['duration'] for n in notes_data):.1f}s")
+                                
+                                convert_btn.config(state="normal")
+                                cancel_btn.config(state="normal", text="Close")
+                            
+                            self.root.after(0, update_gui)
+                        
+                        try:
+                            os.remove(temp_midi_path)
+                        except:
+                            pass
+                            
+                    else:
+                        def show_error():
+                            progress_var.set("❌ Conversion failed - no notes detected")
+                            analysis_text.delete(1.0, tk.END)
+                            analysis_text.insert(tk.END, 
+                                "Conversion failed. Try:\n• Different algorithm\n• Lower sensitivity")
+                            convert_btn.config(state="normal")
+                            cancel_btn.config(state="normal", text="Close")
+                        
+                        dialog.after(0, show_error)
+                        
+                except Exception as e:
+                    def show_error():
+                        progress_var.set(f"❌ Error: {str(e)}")
+                        analysis_text.delete(1.0, tk.END)
+                        analysis_text.insert(tk.END, f"Error: {str(e)}")
+                        convert_btn.config(state="normal")
+                        cancel_btn.config(state="normal", text="Close")
+                    
+                    dialog.after(0, show_error)
+            
+            thread = threading.Thread(target=conversion_worker, daemon=True)
+            thread.start()
+        
+        convert_btn = tk.Button(button_frame, text="🎼 Convert to MIDI", 
+                               command=start_conversion, bg="lightgreen", 
+                               font=("Arial", 11, "bold"), padx=15, pady=5)
+        convert_btn.pack(side="left", padx=10)
+        
+        cancel_btn = tk.Button(button_frame, text="Cancel", 
+                              command=dialog.destroy, bg="lightcoral", 
+                              font=("Arial", 11), padx=15, pady=5)
+        cancel_btn.pack(side="left", padx=10)
         
         # Title
         title_label = tk.Label(dialog, text="🎵 Advanced MP3 to MIDI Converter", 
@@ -940,13 +1922,9 @@ class MIDIGeneratorGUI:
             frame = tk.Frame(algo_frame)
             frame.pack(fill="x", pady=2)
             
-            radio = tk.Radiobutton(frame, text=algo.upper(), variable=algorithm_var, 
+            radio = tk.Radiobutton(frame, text=description, variable=algorithm_var, 
                                   value=algo, font=("Arial", 10, "bold"))
             radio.pack(anchor="w")
-            
-            desc_label = tk.Label(frame, text=description, font=("Arial", 9), 
-                                 fg="gray", wraplength=500)
-            desc_label.pack(anchor="w", padx=20)
         
         # Advanced settings
         advanced_frame = ttk.LabelFrame(dialog, text="Advanced Settings", padding=10)
@@ -1069,15 +2047,14 @@ Onset Density: {analysis['onset_density']:.1f}/sec"""
                 thread = threading.Thread(target=analysis_worker, daemon=True)
                 thread.start()
                 
-            except ImportError:
-                progress_var.set("MP3 conversion not available")
+            except Exception as e:
+                progress_var.set(f"Analysis failed: {str(e)}")
+                progress_bar['value'] = 0
         
         def preview_conversion():
             """Generate a preview of the conversion"""
             try:
                 from mp3_to_midi_converter import MP3ToMIDIConverter
-                
-                algorithm = algorithm_var.get()
                 
                 progress_var.set("Generating preview...")
                 progress_bar['value'] = 30
@@ -1092,7 +2069,7 @@ Onset Density: {analysis['onset_density']:.1f}/sec"""
                         
                         result = converter.preview_conversion(mp3_path, algorithm, preview_duration=10.0)
                         
-                        def show_preview():
+                        def show_results():
                             if result['success']:
                                 notes = result['notes']
                                 estimated = result['estimated_full_notes']
@@ -1111,21 +2088,21 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
                                 analysis_text.insert(1.0, preview_info)
                                 analysis_text.config(state=tk.DISABLED)
                             else:
-                                progress_var.set(f"Preview failed: {result['error']}")
-                            
-                            progress_bar['value'] = 0
+                                progress_var.set(f"❌ Preview failed: {result['error']}")
+                                tk.Button(preview_dialog, text="Close", 
+                                         command=preview_dialog.destroy,
+                                         bg="lightcoral").pack(pady=10)
                         
-                        dialog.after(0, show_preview)
+                        preview_dialog.after(0, show_results)
                         
                     except Exception as e:
                         def show_error():
-                            progress_var.set(f"Preview error: {str(e)}")
-                            progress_bar['value'] = 0
-                        dialog.after(0, show_error)
-                
-                thread = threading.Thread(target=preview_worker, daemon=True)
-                thread.start()
-                
+                            progress_var.set(f"❌ Preview error: {str(e)}")
+                            tk.Button(preview_dialog, text="Close", 
+                                     command=preview_dialog.destroy,
+                                     bg="lightcoral").pack(pady=10)
+                        preview_dialog.after(0, show_error)
+            
             except ImportError:
                 progress_var.set("MP3 conversion not available")
         
@@ -1141,11 +2118,9 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
             analyze_btn.config(state="disabled")
             cancel_btn.config(text="Close", state="disabled")
             
-            def progress_callback(progress, message):
-                """Update progress bar and message"""
-                progress_bar['value'] = progress * 100
-                progress_var.set(message)
-                dialog.update_idletasks()
+            def progress_callback():
+                """Dummy progress callback for immediate return"""
+                pass
             
             def conversion_worker():
                 """Worker thread for conversion"""
@@ -1199,22 +2174,37 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
                             
                             # Update GUI on main thread
                             def update_gui():
-                                self.status_var.set(f"MP3 converted successfully! Generated {len(notes_data)} notes using {used_algorithm.upper()}")
+                                self.status_var.set(f"MP3 converted successfully! Generated {len(notes_data)} notes")
                                 self.update_visualization()
                                 progress_var.set(f"✅ Conversion complete! Generated {len(notes_data)} notes")
+                                
+                                # Show results summary
+                                analysis_text.delete(1.0, tk.END)
+                                analysis_text.insert(tk.END, 
+                                    f"Conversion completed successfully!\n"
+                                    f"Algorithm: {algorithm.upper()}\n"
+                                    f"Notes: {len(notes_data)}, Duration: {max(n['start'] + n['duration'] for n in notes_data):.1f}s")
+                                
+                                convert_btn.config(state="normal")
+                                cancel_btn.config(state="normal", text="Close")
+                            
+                            self.root.after(0, update_gui)
+                        else:
+                            def show_error():
+                                progress_var.set("❌ Conversion failed - no notes detected")
                                 convert_btn.config(state="normal")
                                 preview_btn.config(state="normal")
                                 analyze_btn.config(state="normal")
                                 cancel_btn.config(state="normal", text="Close")
                             
-                            self.root.after(0, update_gui)
+                            self.root.after(0, show_error)
                         
                         # Clean up temporary file
                         try:
                             os.remove(temp_midi_path)
                         except:
                             pass
-                            
+                        
                     else:
                         def show_error():
                             progress_var.set("❌ Conversion failed - no notes detected")
@@ -1224,7 +2214,7 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
                             cancel_btn.config(state="normal", text="Close")
                         
                         self.root.after(0, show_error)
-                        
+                
                 except Exception as e:
                     def show_error():
                         progress_var.set(f"❌ Conversion error: {str(e)}")
@@ -1299,23 +2289,17 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
                 
                 progress_var.set("Analyzing audio for generation...")
                 progress_bar['value'] = 20
-                dialog.update_idletasks()
                 
                 def generation_worker():
                     try:
                         converter = MP3ToMIDIConverter()
-                        
-                        # Load and analyze audio
                         y, sr = converter.load_audio(mp3_path)
                         analysis = converter.analyze_audio_characteristics(y, sr)
                         
-                        # Generate inspired melody
-                        style = style_var.get()
-                        duration = gen_duration_var.get()
-                        
-                        progress_var.set(f"Generating {style} style music...")
-                        progress_bar['value'] = 60
-                        dialog.update_idletasks()
+                        def update_progress():
+                            progress_var.set(f"Generating {style} style music...")
+                            progress_bar['value'] = 60
+                        self.root.after(0, update_progress)
                         
                         inspired_notes = converter.generate_inspired_melody(analysis, duration, style)
                         
@@ -1323,7 +2307,6 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
                             # Create MIDI file
                             midi_file = converter.create_midi_file(inspired_notes, int(analysis.get('tempo', 120)))
                             
-                            # Update main application
                             def update_main_app():
                                 self.generator.current_midi = midi_file
                                 self.generator.notes_data = inspired_notes
@@ -1331,11 +2314,16 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
                                 self.update_visualization()
                                 progress_var.set(f"✅ Generated {len(inspired_notes)} notes ({style} style)")
                                 progress_bar['value'] = 0
-                            
+                                
+                                analysis_text.delete(1.0, tk.END)
+                                analysis_text.insert(tk.END, 
+                                    f"Generated {len(inspired_notes)} notes in {style} style\n"
+                                    f"Duration: {duration}s | Based on audio analysis")
+                        
                             self.root.after(0, update_main_app)
                         else:
                             def show_error():
-                                progress_var.set("❌ Generation failed - no notes created")
+                                progress_var.set("❌ Generation failed")
                                 progress_bar['value'] = 0
                             self.root.after(0, show_error)
                         
@@ -1344,12 +2332,12 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
                             progress_var.set(f"❌ Generation error: {str(e)}")
                             progress_bar['value'] = 0
                         self.root.after(0, show_error)
-                
+            
                 thread = threading.Thread(target=generation_worker, daemon=True)
                 thread.start()
                 
             except ImportError:
-                progress_var.set("Generation not available - MP3 converter missing")
+                progress_var.set("Generation not available")
         
         def generate_variations():
             """Generate variations of converted music"""
@@ -1362,7 +2350,6 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
                 
                 progress_var.set("Creating musical variations...")
                 progress_bar['value'] = 30
-                dialog.update_idletasks()
                 
                 def variation_worker():
                     try:
@@ -1380,8 +2367,6 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
                         if variations:
                             # Use the first variation for now
                             varied_notes = variations[0]
-                            
-                            # Create MIDI file
                             midi_file = converter.create_midi_file(varied_notes, 120)
                             
                             def update_main_app():
@@ -1391,7 +2376,12 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
                                 self.update_visualization()
                                 progress_var.set(f"✅ Created variation with {len(varied_notes)} notes")
                                 progress_bar['value'] = 0
-                            
+                                
+                                analysis_text.delete(1.0, tk.END)
+                                analysis_text.insert(tk.END, 
+                                    f"Created musical variation\n"
+                                    f"Notes: {len(varied_notes)} | Type: Rhythmic & melodic variation")
+                        
                             self.root.after(0, update_main_app)
                         else:
                             def show_error():
@@ -1404,311 +2394,473 @@ Issues: {', '.join(quality['issues']) if quality['issues'] else 'None'}"""
                             progress_var.set(f"❌ Variation error: {str(e)}")
                             progress_bar['value'] = 0
                         self.root.after(0, show_error)
-                
+            
                 thread = threading.Thread(target=variation_worker, daemon=True)
                 thread.start()
                 
             except ImportError:
                 progress_var.set("Variation generation not available")
-        
-        generate_inspired_btn = tk.Button(gen_button_frame, text="🎨 Generate Inspired Music", 
-                                         command=generate_inspired_music, bg="mediumpurple", 
-                                         fg="white", font=("Arial", 10, "bold"), padx=10)
-        generate_inspired_btn.pack(side="left", padx=5)
-        
-        generate_variations_btn = tk.Button(gen_button_frame, text="🔄 Create Variations", 
-                                           command=generate_variations, bg="darkorange", 
-                                           fg="white", font=("Arial", 10, "bold"), padx=10)
-        generate_variations_btn.pack(side="left", padx=5)
 
-    # === BATCH CONVERSION METHODS ===
-    
     def show_batch_conversion_dialog(self):
-        """Show batch conversion dialog for multiple files"""
-        # File selection for batch
-        files = filedialog.askopenfilenames(
-            title="Select audio files for batch conversion",
-            filetypes=[
-                ("Audio Files", "*.mp3 *.wav *.flac *.m4a"),
-                ("MP3 Files", "*.mp3"),
-                ("WAV Files", "*.wav"),
-                ("All Files", "*.*")
-            ]
-        )
-        
-        if not files:
-            return
-        
-        # Output directory selection
-        output_dir = filedialog.askdirectory(title="Select output directory for MIDI files")
-        if not output_dir:
-            return
-        
-        # Create batch dialog
+        """Show batch MP3 to MIDI conversion dialog"""
         dialog = tk.Toplevel(self.root)
         dialog.title("Batch MP3 to MIDI Conversion")
-        dialog.geometry("500x400")
+        dialog.geometry("800x700")
+        dialog.resizable(True, True)
         dialog.grab_set()
+        dialog.transient(self.root)
+        
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (800 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (700 // 2)
+        dialog.geometry(f"800x700+{x}+{y}")
+        
+        # Main frame
+        main_frame = tk.Frame(dialog)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
         # Title
-        title_label = tk.Label(dialog, text="🎵 Batch Conversion", 
+        title_label = tk.Label(main_frame, text="🎵 Batch MP3 to MIDI Conversion", 
                               font=("Arial", 16, "bold"))
-        title_label.pack(pady=20)
+        title_label.pack(pady=(0, 20))
         
-        # Files info
-        files_frame = ttk.LabelFrame(dialog, text="Selected Files", padding=10)
-        files_frame.pack(pady=10, padx=20, fill="both", expand=True)
+        # File selection frame
+        file_frame = ttk.LabelFrame(main_frame, text="Select MP3 Files", padding=10)
+        file_frame.pack(fill="both", expand=True, pady=(0, 10))
         
-        files_list = tk.Listbox(files_frame, height=8)
-        for file in files:
-            files_list.insert(tk.END, os.path.basename(file))
-        files_list.pack(fill="both", expand=True)
+        # File list
+        file_list_frame = tk.Frame(file_frame)
+        file_list_frame.pack(fill="both", expand=True)
+        
+        # Create listbox with scrollbar
+        list_frame = tk.Frame(file_list_frame)
+        list_frame.pack(fill="both", expand=True)
+        
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side="right", fill="y")
+        
+        file_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, height=8)
+        file_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=file_listbox.yview)
+        
+        selected_files = []
+        
+        def add_files():
+            files = filedialog.askopenfilenames(
+                title="Select MP3 files",
+                filetypes=[("MP3 files", "*.mp3"), ("All files", "*.*")]
+            )
+            for file in files:
+                if file not in selected_files:
+                    selected_files.append(file)
+                    file_listbox.insert(tk.END, os.path.basename(file))
+        
+        def remove_selected():
+            selection = file_listbox.curselection()
+            if selection:
+                idx = selection[0]
+                selected_files.pop(idx)
+                file_listbox.delete(idx)
+        
+        def clear_all():
+            selected_files.clear()
+            file_listbox.delete(0, tk.END)
+        
+        # File buttons
+        file_btn_frame = tk.Frame(file_frame)
+        file_btn_frame.pack(fill="x", pady=(10, 0))
+        
+        tk.Button(file_btn_frame, text="➕ Add Files", command=add_files,
+                 font=("Arial", 10)).pack(side="left", padx=(0, 5))
+        tk.Button(file_btn_frame, text="➖ Remove Selected", command=remove_selected,
+                 font=("Arial", 10)).pack(side="left", padx=5)
+        tk.Button(file_btn_frame, text="🗑️ Clear All", command=clear_all,
+                 font=("Arial", 10)).pack(side="left", padx=5)
+        
+        # Settings frame
+        settings_frame = ttk.LabelFrame(main_frame, text="Conversion Settings", padding=10)
+        settings_frame.pack(fill="x", pady=(0, 10))
         
         # Algorithm selection
-        algo_frame = tk.Frame(dialog)
-        algo_frame.pack(pady=10)
+        algo_frame = tk.Frame(settings_frame)
+        algo_frame.pack(fill="x", pady=(0, 10))
         
-        tk.Label(algo_frame, text="Algorithm:").pack(side="left")
-        batch_algo_var = tk.StringVar(value="auto")
-        algo_combo = ttk.Combobox(algo_frame, textvariable=batch_algo_var,
-                                 values=["auto", "cqt", "chroma", "onset"],
-                                 state="readonly")
-        algo_combo.pack(side="left", padx=10)
+        tk.Label(algo_frame, text="Algorithm:", font=("Arial", 10, "bold")).pack(side="left")
+        algorithm_var = tk.StringVar(value="auto")
         
-        # Progress
-        progress_frame = tk.Frame(dialog)
-        progress_frame.pack(pady=10, padx=20, fill="x")
+        algorithms = [("Auto-Select", "auto"), ("CQT (Melodies)", "cqt"), 
+                     ("Chroma (Chords)", "chroma"), ("Onset (Rhythm)", "onset")]
         
-        batch_progress_var = tk.StringVar(value="Ready to start batch conversion...")
-        batch_progress_label = tk.Label(progress_frame, textvariable=batch_progress_var)
-        batch_progress_label.pack()
+        for i, (text, value) in enumerate(algorithms):
+            tk.Radiobutton(algo_frame, text=text, variable=algorithm_var, value=value,
+                          font=("Arial", 9)).pack(side="left", padx=(10 if i == 0 else 5, 0))
         
-        batch_progress_bar = ttk.Progressbar(progress_frame, mode='determinate')
-        batch_progress_bar.pack(fill="x", pady=5)
+        # Output directory
+        output_frame = tk.Frame(settings_frame)
+        output_frame.pack(fill="x", pady=(0, 10))
         
-        def start_batch():
-            """Start batch conversion"""
-            try:
-                from mp3_to_midi_converter import MP3ToMIDIConverter
+        tk.Label(output_frame, text="Output Directory:", font=("Arial", 10, "bold")).pack(side="left")
+        output_var = tk.StringVar(value=os.getcwd())
+        output_entry = tk.Entry(output_frame, textvariable=output_var, font=("Arial", 9))
+        output_entry.pack(side="left", fill="x", expand=True, padx=(10, 5))
+        
+        def browse_output():
+            directory = filedialog.askdirectory(title="Select Output Directory")
+            if directory:
+                output_var.set(directory)
+        
+        tk.Button(output_frame, text="📁 Browse", command=browse_output,
+                 font=("Arial", 9)).pack(side="right")
+        
+        # Progress frame
+        progress_frame = ttk.LabelFrame(main_frame, text="Conversion Progress", padding=10)
+        progress_frame.pack(fill="x", pady=(0, 10))
+        
+        progress_var = tk.StringVar(value="Ready to convert...")
+        progress_label = tk.Label(progress_frame, textvariable=progress_var, font=("Arial", 10))
+        progress_label.pack(anchor="w")
+        
+        progress_bar = ttk.Progressbar(progress_frame, mode='determinate')
+        progress_bar.pack(fill="x", pady=(5, 0))
+        
+        # Results text area
+        results_frame = ttk.LabelFrame(main_frame, text="Conversion Results", padding=10)
+        results_frame.pack(fill="both", expand=True, pady=(0, 10))
+        
+        results_text = scrolledtext.ScrolledText(results_frame, height=6, font=("Consolas", 9))
+        results_text.pack(fill="both", expand=True)
+        
+        def start_batch_conversion():
+            if not selected_files:
+                messagebox.showwarning("No Files", "Please select MP3 files to convert.")
+                return
+            
+            output_dir = output_var.get()
+            if not os.path.exists(output_dir):
+                messagebox.showerror("Invalid Directory", "Output directory does not exist.")
+                return
+            
+            algorithm = algorithm_var.get()
+            
+            def conversion_thread():
+                try:
+                    from mp3_to_midi_converter import MP3ToMIDIConverter
+                    
+                    def progress_callback(progress, message):
+                        progress_var.set(message)
+                        progress_bar['value'] = progress * 100
+                        dialog.update_idletasks()
+                    
+                    converter = MP3ToMIDIConverter(progress_callback=progress_callback)
+                    results = converter.batch_convert(selected_files, output_dir, algorithm)
+                    
+                    # Display results
+                    results_text.delete(1.0, tk.END)
+                    results_text.insert(tk.END, "🎵 BATCH CONVERSION RESULTS\n")
+                    results_text.insert(tk.END, "=" * 50 + "\n\n")
+                    
+                    successful = 0
+                    failed = 0
+                    
+                    for file_path, result in results.items():
+                        filename = os.path.basename(file_path)
+                        if result['success']:
+                            successful += 1
+                            results_text.insert(tk.END, f"✅ {filename}\n")
+                            results_text.insert(tk.END, f"   Algorithm: {result.get('algorithm_used', 'N/A')}\n")
+                            results_text.insert(tk.END, f"   Output: {os.path.basename(result.get('output_file', 'N/A'))}\n\n")
+                        else:
+                            failed += 1
+                            results_text.insert(tk.END, f"❌ {filename}\n")
+                            results_text.insert(tk.END, f"   Error: {result.get('error', 'Unknown error')}\n\n")
+                    
+                    results_text.insert(tk.END, f"\n📊 SUMMARY: {successful} successful, {failed} failed\n")
+                    
+                    progress_var.set(f"✅ Batch conversion complete: {successful}/{len(selected_files)} successful")
+                    progress_bar['value'] = 100
+                    
+                    if successful > 0:
+                        messagebox.showinfo("Conversion Complete", 
+                                          f"Successfully converted {successful} out of {len(selected_files)} files!\n\n"
+                                          f"Output directory: {output_dir}")
                 
-                def batch_progress_callback(progress, message):
-                    batch_progress_bar['value'] = progress * 100
-                    batch_progress_var.set(message)
-                    dialog.update_idletasks()
-                
-                def batch_worker():
-                    try:
-                        converter = MP3ToMIDIConverter(batch_progress_callback)
-                        results = converter.batch_convert(list(files), output_dir, 
-                                                        batch_algo_var.get())
+                except Exception as e:
+                    progress_var.set(f"❌ Batch conversion failed: {str(e)}")
+                    messagebox.showerror("Conversion Error", f"Batch conversion failed:\n{str(e)}")
+            
+            # Start conversion in a separate thread
+            import threading
+            thread = threading.Thread(target=conversion_thread)
+            thread.daemon = True
+            thread.start()
+        
+        # Control buttons
+        button_frame = tk.Frame(main_frame)
+        button_frame.pack(fill="x")
+        
+        tk.Button(button_frame, text="🚀 Start Batch Conversion", command=start_batch_conversion,
+                 font=("Arial", 12, "bold"), bg="#4CAF50", fg="white", 
+                 relief="raised", bd=2).pack(side="left", padx=(0, 10))
+        
+        tk.Button(button_frame, text="❌ Close", command=dialog.destroy,
+                 font=("Arial", 11)).pack(side="right")
+
+    def analyze_audio_for_gui(self, mp3_path, algorithm_var, sensitivity_var, analysis_text):
+        """Analyze audio and update GUI with recommendations"""
+        try:
+            if not MP3_CONVERSION_AVAILABLE:
+                analysis_text.delete(1.0, tk.END)
+                analysis_text.insert(tk.END, "Audio analysis requires librosa and soundfile libraries")
+                return
+            
+            from mp3_to_midi_converter import MP3ToMIDIConverter
+            
+            analysis_text.delete(1.0, tk.END)
+            analysis_text.insert(tk.END, "Analyzing audio...")
+            
+            def analysis_worker():
+                try:
+                    converter = MP3ToMIDIConverter()
+                    y, sr = converter.load_audio(mp3_path)
+                    analysis = converter.analyze_audio_characteristics(y, sr)
+                    
+                    def update_analysis():
+                        # Update algorithm selection
+                        algorithm_var.set(analysis['recommended_algorithm'])
+                        sensitivity_var.set(analysis.get('recommended_sensitivity', 0.5))
                         
-                        def show_results():
-                            successful = sum(1 for r in results.values() if r['success'])
-                            batch_progress_var.set(f"✅ Batch complete: {successful}/{len(files)} successful")
-                            
-                            # Show detailed results
-                            result_text = f"Batch Conversion Results:\n\n"
-                            for file, result in results.items():
-                                name = os.path.basename(file)
-                                if result['success']:
-                                    algo = result.get('algorithm_used', 'unknown')
-                                    result_text += f"✅ {name} - {algo.upper()}\n"
-                                else:
-                                    error = result.get('error', 'Unknown error')
-                                    result_text += f"❌ {name} - {error}\n"
-                            
-                            messagebox.showinfo("Batch Results", result_text)
+                        # Display analysis results
+                        analysis_text.delete(1.0, tk.END)
+                        analysis_str = f"""Audio Analysis Results:
+Duration: {analysis['duration']:.1f}s | Tempo: {analysis['tempo']:.1f} BPM
+Recommended: {analysis['recommended_algorithm'].upper()}
+Reason: {analysis['reason']}
+Harmonic Ratio: {analysis['harmonic_ratio']:.2f}"""
                         
-                        dialog.after(0, show_results)
+                        analysis_text.insert(1.0, analysis_str)
+                    
+                    self.root.after(0, update_analysis)
+                    
+                except Exception as e:
+                    def show_error():
+                        analysis_text.delete(1.0, tk.END)
+                        analysis_text.insert(tk.END, f"Analysis error: {str(e)}")
+                    self.root.after(0, show_error)
+            
+            thread = threading.Thread(target=analysis_worker, daemon=True)
+            thread.start()
+            
+        except ImportError:
+            analysis_text.delete(1.0, tk.END)
+            analysis_text.insert(tk.END, "MP3 conversion not available")
+
+    def generate_inspired_music_gui(self, mp3_path, style, duration, progress_var, progress_bar, analysis_text):
+        """Generate inspired music from GUI"""
+        try:
+            if not MP3_CONVERSION_AVAILABLE:
+                progress_var.set("Generation requires MP3 conversion libraries")
+                return
+            
+            from mp3_to_midi_converter import MP3ToMIDIConverter
+            
+            progress_var.set("Analyzing audio for generation...")
+            progress_bar['value'] = 20
+            
+            def generation_worker():
+                try:
+                    converter = MP3ToMIDIConverter()
+                    y, sr = converter.load_audio(mp3_path)
+                    analysis = converter.analyze_audio_characteristics(y, sr)
+                    
+                    def update_progress():
+                        progress_var.set(f"Generating {style} style music...")
+                        progress_bar['value'] = 60
+                    self.root.after(0, update_progress)
+                    
+                    inspired_notes = converter.generate_inspired_melody(analysis, duration, style)
+                    
+                    if inspired_notes:
+                        # Create MIDI file
+                        midi_file = converter.create_midi_file(inspired_notes, int(analysis.get('tempo', 120)))
+                        
+                        def update_main_app():
+                            self.generator.current_midi = midi_file
+                            self.generator.notes_data = inspired_notes
+                            self.status_var.set(f"Generated {len(inspired_notes)} inspired notes in {style} style!")
+                            self.update_visualization()
+                            progress_var.set(f"✅ Generated {len(inspired_notes)} notes ({style} style)")
+                            progress_bar['value'] = 0
+                            
+                            analysis_text.delete(1.0, tk.END)
+                            analysis_text.insert(tk.END, 
+                                f"Generated {len(inspired_notes)} notes in {style} style\n"
+                                f"Duration: {duration}s | Based on audio analysis")
+                        
+                        self.root.after(0, update_main_app)
+                    else:
+                        def show_error():
+                            progress_var.set("❌ Generation failed")
+                            progress_bar['value'] = 0
+                        self.root.after(0, show_error)
+                        
+                except Exception as e:
+                    def show_error():
+                        progress_var.set(f"❌ Generation error: {str(e)}")
+                        progress_bar['value'] = 0
+                    self.root.after(0, show_error)
+            
+            thread = threading.Thread(target=generation_worker, daemon=True)
+            thread.start()
+            
+        except ImportError:
+            progress_var.set("Generation not available")
+
+    def create_variations_gui(self, progress_var, progress_bar, analysis_text):
+        """Create variations from GUI"""
+        if not hasattr(self.generator, 'current_midi') or not self.generator.current_midi:
+            progress_var.set("Please convert audio to MIDI first!")
+            return
+        
+        try:
+            if not MP3_CONVERSION_AVAILABLE:
+                progress_var.set("Variations require MP3 conversion libraries")
+                return
+            
+            from mp3_to_midi_converter import MP3ToMIDIConverter
+            
+            progress_var.set("Creating variations...")
+            progress_bar['value'] = 30
+            
+            def variation_worker():
+                try:
+                    converter = MP3ToMIDIConverter()
+                    
+                    if hasattr(self.generator, 'notes_data') and self.generator.notes_data:
+                        original_notes = self.generator.notes_data
+                    else:
+                        progress_var.set("❌ No original notes available")
+                        return
+                    
+                    variations = converter.create_variations(original_notes, num_variations=3)
+                    
+                    if variations:
+                        # Use the first variation for now
+                        varied_notes = variations[0]
+                        midi_file = converter.create_midi_file(varied_notes, 120)
+                        
+                        def update_main_app():
+                            self.generator.current_midi = midi_file
+                            self.generator.notes_data = varied_notes
+                            self.status_var.set(f"Created variation with {len(varied_notes)} notes!")
+                            self.update_visualization()
+                            progress_var.set(f"✅ Created variation with {len(varied_notes)} notes")
+                            progress_bar['value'] = 0
+                            
+                            analysis_text.delete(1.0, tk.END)
+                            analysis_text.insert(tk.END, 
+                                f"Created musical variation\n"
+                                f"Notes: {len(varied_notes)} | Type: Rhythmic & melodic variation")
+                        
+                        self.root.after(0, update_main_app)
+                    else:
+                        def show_error():
+                            progress_var.set("❌ Variation creation failed")
+                            progress_bar['value'] = 0
+                        self.root.after(0, show_error)
+                        
+                except Exception as e:
+                    def show_error():
+                        progress_var.set(f"❌ Variation error: {str(e)}")
+                        progress_bar['value'] = 0
+                    self.root.after(0, show_error)
+            
+            thread = threading.Thread(target=variation_worker, daemon=True)
+            thread.start()
+            
+        except ImportError:
+            progress_var.set("Variation generation not available")
+
+    def preview_conversion(self, mp3_path, algorithm, tempo):
+        """Preview conversion with better feedback"""
+        try:
+            if not MP3_CONVERSION_AVAILABLE:
+                messagebox.showinfo("Preview", "Preview requires librosa and soundfile libraries")
+                return
+            
+            from mp3_to_midi_converter import MP3ToMIDIConverter
+            
+            # Show preview in a simple dialog
+            preview_dialog = tk.Toplevel(self.root)
+            preview_dialog.title("Conversion Preview")
+            preview_dialog.geometry("400x200")
+            preview_dialog.grab_set()
+            
+            tk.Label(preview_dialog, text="🔍 Generating Preview...", 
+                    font=("Arial", 14, "bold")).pack(pady=20)
+            
+            progress_text = tk.StringVar(value="Loading audio...")
+            progress_label = tk.Label(preview_dialog, textvariable=progress_text)
+            progress_label.pack(pady=10)
+            
+            preview_progress = ttk.Progressbar(preview_dialog, mode='determinate')
+            preview_progress.pack(fill="x", padx=20, pady=10)
+            
+            def preview_worker():
+                try:
+                    converter = MP3ToMIDIConverter(
+                        lambda p, m: (
+                            preview_progress.config(value=p*100),
+                            progress_text.set(m),
+                            preview_dialog.update_idletasks()
+                        )
+                    )
+                    
+                    result = converter.preview_conversion(mp3_path, algorithm, preview_duration=10.0)
+                    
+                    def show_results():
+                        if result['success']:
+                            notes = result['notes']
+                            estimated = result['estimated_full_notes']
+                            progress_text.set(f"✅ Preview complete!")
+                            
+                            # Show results
+                            results_text = f"""Preview Results (10s sample):
+Notes detected: {len(notes)}
+Estimated full song: {estimated} notes
+Algorithm: {result['algorithm_used'].upper()}
+Quality: {'Good' if len(notes) > 5 else 'May need adjustment'}"""
+                        
+                            tk.Label(preview_dialog, text=results_text, 
+                                    justify="left", font=("Arial", 9)).pack(pady=10)
+                            
+                            tk.Button(preview_dialog, text="Close", 
+                                     command=preview_dialog.destroy,
+                                     bg="lightblue").pack(pady=10)
+                        else:
+                            progress_text.set(f"❌ Preview failed: {result['error']}")
+                            tk.Button(preview_dialog, text="Close", 
+                                     command=preview_dialog.destroy,
+                                     bg="lightcoral").pack(pady=10)
+                        
+                        preview_dialog.after(0, show_results)
                         
                     except Exception as e:
                         def show_error():
-                            batch_progress_var.set(f"❌ Batch error: {str(e)}")
-                        dialog.after(0, show_error)
-                
-                thread = threading.Thread(target=batch_worker, daemon=True)
-                thread.start()
-                
-            except ImportError:
-                messagebox.showerror("Error", "MP3 conversion not available")
+                            progress_text.set(f"❌ Preview error: {str(e)}")
+                            tk.Button(preview_dialog, text="Close", 
+                                     command=preview_dialog.destroy,
+                                     bg="lightcoral").pack(pady=10)
+                        preview_dialog.after(0, show_error)
+            
+            thread = threading.Thread(target=preview_worker, daemon=True)
+            thread.start()
+            
+        except ImportError:
+            messagebox.showerror("Preview Error", "MP3 conversion libraries not available")
         
-        # Buttons
-        button_frame = tk.Frame(dialog)
-        button_frame.pack(pady=20)
-        
-        start_btn = tk.Button(button_frame, text="🚀 Start Batch Conversion",
-                             command=start_batch, bg="lightgreen", 
-                             font=("Arial", 12, "bold"))
-        start_btn.pack(side="left", padx=10)
-        
-        close_btn = tk.Button(button_frame, text="Close", command=dialog.destroy)
-        close_btn.pack(side="right", padx=10)
-
-    def create_settings_tab(self):
-        """Create the settings configuration tab"""
-        import tkinter as tk
-        
-        settings_frame = ttk.Frame(self.notebook)
-        self.notebook.add(settings_frame, text="Settings")
-        
-        # Musical Settings
-        musical_frame = ttk.LabelFrame(settings_frame, text="Musical Settings", padding=10)
-        musical_frame.pack(pady=10, padx=20, fill="x")
-        
-        # Song Length
-        length_frame = tk.Frame(musical_frame)
-        length_frame.pack(fill="x", pady=5)
-        tk.Label(length_frame, text="Song Length (bars):", width=20, anchor="w").pack(side="left")
-        length_scale = tk.Scale(length_frame, from_=8, to=128, orient="horizontal",
-                               variable=self.song_length_var, command=self.update_song_length)
-        length_scale.pack(side="left", fill="x", expand=True)
-        tk.Label(length_frame, textvariable=self.song_length_var, width=5).pack(side="right")
-        
-        # Note Range
-        range_frame = tk.Frame(musical_frame)
-        range_frame.pack(fill="x", pady=5)
-        tk.Label(range_frame, text="Note Range:", width=20, anchor="w").pack(side="left")
-        tk.Label(range_frame, text="Low:", width=5).pack(side="left")
-        low_scale = tk.Scale(range_frame, from_=24, to=96, orient="horizontal",
-                            variable=self.note_low_var, command=self.update_note_range)
-        low_scale.pack(side="left", fill="x", expand=True)
-        tk.Label(range_frame, text="High:", width=5).pack(side="left")
-        high_scale = tk.Scale(range_frame, from_=24, to=96, orient="horizontal",
-                             variable=self.note_high_var, command=self.update_note_range)
-        high_scale.pack(side="left", fill="x", expand=True)
-        
-        # Swing
-        swing_frame = tk.Frame(musical_frame)
-        swing_frame.pack(fill="x", pady=5)
-        tk.Label(swing_frame, text="Swing Factor:", width=20, anchor="w").pack(side="left")
-        swing_scale = tk.Scale(swing_frame, from_=0.0, to=0.5, resolution=0.01, orient="horizontal",
-                              variable=self.swing_var, command=self.update_swing)
-        swing_scale.pack(side="left", fill="x", expand=True)
-        
-        # Rest Probability
-        rest_frame = tk.Frame(musical_frame)
-        rest_frame.pack(fill="x", pady=5)
-        tk.Label(rest_frame, text="Rest Probability:", width=20, anchor="w").pack(side="left")
-        rest_scale = tk.Scale(rest_frame, from_=0.0, to=0.8, resolution=0.01, orient="horizontal",
-                             variable=self.rest_prob_var, command=self.update_rest_prob)
-        rest_scale.pack(side="left", fill="x", expand=True)
-        
-        # Chaos Factor
-        chaos_frame = tk.Frame(musical_frame)
-        chaos_frame.pack(fill="x", pady=5)
-        tk.Label(chaos_frame, text="Chaos Factor:", width=20, anchor="w").pack(side="left")
-        chaos_scale = tk.Scale(chaos_frame, from_=0.0, to=1.0, resolution=0.01, orient="horizontal",
-                              variable=self.chaos_var, command=self.update_chaos)
-        chaos_scale.pack(side="left", fill="x", expand=True)
-        
-        # Randomization buttons
-        random_frame = ttk.LabelFrame(settings_frame, text="Quick Randomization", padding=10)
-        random_frame.pack(pady=10, padx=20, fill="x")
-        
-        random_btn_frame = tk.Frame(random_frame)
-        random_btn_frame.pack(fill="x")
-        
-        tk.Button(random_btn_frame, text="Random Tempo", command=self.random_tempo,
-                 width=15).pack(side="left", padx=5)
-        tk.Button(random_btn_frame, text="Random Key", command=self.random_key,
-                 width=15).pack(side="left", padx=5)
-        tk.Button(random_btn_frame, text="Random Scale", command=self.random_scale,
-                 width=15).pack(side="left", padx=5)
-    
-    def create_advanced_tab(self):
-        """Create the advanced features tab"""
-        import tkinter as tk
-        
-        advanced_frame = ttk.Frame(self.notebook)
-        self.notebook.add(advanced_frame, text="Advanced")
-        
-        # Instrument Selection
-        instrument_frame = ttk.LabelFrame(advanced_frame, text="Instrument Selection", padding=10)
-        instrument_frame.pack(pady=10, padx=20, fill="x")
-        
-        # Melody Instrument
-        melody_frame = tk.Frame(instrument_frame)
-        melody_frame.pack(fill="x", pady=5)
-        tk.Label(melody_frame, text="Melody Instrument:", width=20, anchor="w").pack(side="left")
-        melody_combo = ttk.Combobox(melody_frame, textvariable=self.melody_instrument_var,
-                                   values=["piano", "sine", "sawtooth", "square", "triangle"],
-                                   state="readonly", width=15)
-        melody_combo.pack(side="left", padx=5)
-        melody_combo.bind("<<ComboboxSelected>>", self.update_melody_instrument)
-        
-        # Bass Instrument
-        bass_frame = tk.Frame(instrument_frame)
-        bass_frame.pack(fill="x", pady=5)
-        tk.Label(bass_frame, text="Bass Instrument:", width=20, anchor="w").pack(side="left")
-        bass_combo = ttk.Combobox(bass_frame, textvariable=self.bass_instrument_var,
-                                 values=["sine", "sawtooth", "square", "triangle", "piano"],
-                                 state="readonly", width=15)
-        bass_combo.pack(side="left", padx=5)
-        bass_combo.bind("<<ComboboxSelected>>", self.update_bass_instrument)
-        
-        # Pattern Selection (placeholder for future features)
-        pattern_frame = ttk.LabelFrame(advanced_frame, text="Pattern & Style", padding=10)
-        pattern_frame.pack(pady=10, padx=20, fill="x")
-        
-        tk.Label(pattern_frame, text="Advanced pattern controls will be added here",
-                font=("Arial", 10, "italic")).pack(pady=20)
-    
-    def create_audio_tab(self):
-        """Create the audio controls tab"""
-        import tkinter as tk
-        
-        audio_frame = ttk.Frame(self.notebook)
-        self.notebook.add(audio_frame, text="Audio")
-        
-        # Volume and Effects
-        effects_frame = ttk.LabelFrame(audio_frame, text="Audio Effects", padding=10)
-        effects_frame.pack(pady=10, padx=20, fill="x")
-        
-        # Volume
-        volume_frame = tk.Frame(effects_frame)
-        volume_frame.pack(fill="x", pady=5)
-        tk.Label(volume_frame, text="Master Volume:", width=20, anchor="w").pack(side="left")
-        volume_scale = tk.Scale(volume_frame, from_=0.0, to=1.0, resolution=0.01, orient="horizontal",
-                               variable=self.volume_var, command=self.update_volume)
-        volume_scale.pack(side="left", fill="x", expand=True)
-        
-        # Filter Cutoff
-        filter_frame = tk.Frame(effects_frame)
-        filter_frame.pack(fill="x", pady=5)
-        tk.Label(filter_frame, text="Filter Cutoff (Hz):", width=20, anchor="w").pack(side="left")
-        filter_scale = tk.Scale(filter_frame, from_=200, to=20000, orient="horizontal",
-                               variable=self.filter_cutoff_var, command=self.update_filter)
-        filter_scale.pack(side="left", fill="x", expand=True)
-        
-        # Stereo Width
-        stereo_frame = tk.Frame(effects_frame)
-        stereo_frame.pack(fill="x", pady=5)
-        tk.Label(stereo_frame, text="Stereo Width:", width=20, anchor="w").pack(side="left")
-        stereo_scale = tk.Scale(stereo_frame, from_=0.0, to=1.0, resolution=0.01, orient="horizontal",
-                               variable=self.stereo_width_var, command=self.update_stereo)
-        stereo_scale.pack(side="left", fill="x", expand=True)
-        
-        # Audio Testing
-        test_frame = ttk.LabelFrame(audio_frame, text="Audio Testing", padding=10)
-        test_frame.pack(pady=10, padx=20, fill="x")
-        
-        test_btn_frame = tk.Frame(test_frame)
-        test_btn_frame.pack(fill="x")
-        
-        tk.Button(test_btn_frame, text="🎹 Test Piano", command=self.test_piano_note,
-                 width=15, bg="lightblue").pack(side="left", padx=5)
-        tk.Button(test_btn_frame, text="🎸 Test Bass", command=self.test_bass_note,
-                 width=15, bg="lightgreen").pack(side="left", padx=5)
-        tk.Button(test_btn_frame, text="🥁 Test Drums", command=self.test_drum_sound,
-                 width=15, bg="lightyellow").pack(side="left", padx=5)
-
-    def run(self):
-        """Start the GUI main loop"""
-        print("🚀 Starting Ultimate MIDI Generator GUI...")
-        self.root.mainloop()
-
 
 # === MAIN EXECUTION ===
 if __name__ == "__main__":
     app = MIDIGeneratorGUI()
-    app.run()
+    app.root.mainloop()
