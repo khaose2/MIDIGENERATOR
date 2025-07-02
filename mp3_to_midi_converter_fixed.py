@@ -61,32 +61,24 @@ class MP3ToMIDIConverter:
             raise Exception(f"Failed to load audio file: {str(e)}")
     
     def extract_pitch_chroma(self, y: np.ndarray, sr: int) -> Tuple[np.ndarray, np.ndarray]:
-        """Extract pitch using chroma features with enhanced preprocessing"""
-        self._update_progress(0.3, "Extracting enhanced chroma features...")
+        """Extract pitch using chroma features (good for harmonic content)"""
+        self._update_progress(0.3, "Extracting chroma features...")
         
-        # Preprocess audio for better chroma extraction
-        y_processed = self.preprocess_audio(y, sr)
-        
-        # Extract chroma features with better parameters
+        # Extract chroma features
         chroma = librosa.feature.chroma_stft(
-            y=y_processed, sr=sr, 
+            y=y, sr=sr, 
             hop_length=self.hop_length,
-            n_fft=self.frame_length,
-            norm=2,  # L2 normalization
-            center=True
+            n_fft=self.frame_length
         )
-        
-        # Apply enhancement to chroma features
-        chroma_enhanced = librosa.util.normalize(chroma, axis=0)
         
         # Get time frames
         times = librosa.frames_to_time(
-            np.arange(chroma_enhanced.shape[1]), 
+            np.arange(chroma.shape[1]), 
             sr=sr, 
             hop_length=self.hop_length
         )
         
-        return chroma_enhanced, times
+        return chroma, times
     
     def extract_pitch_cqt(self, y: np.ndarray, sr: int) -> Tuple[np.ndarray, np.ndarray]:
         """Enhanced CQT extraction with better parameters for pitch detection"""
@@ -95,24 +87,15 @@ class MP3ToMIDIConverter:
         # Preprocess audio for better results
         y_processed = self.preprocess_audio(y, sr)
         
-        # Calculate safe frequency range based on sample rate
-        nyquist = sr / 2
-        fmin = librosa.note_to_hz('C2')  # ~65 Hz
-        
-        # Calculate maximum frequency and bins to avoid exceeding Nyquist
-        max_freq = min(librosa.note_to_hz('C7'), nyquist * 0.9)  # Stay below Nyquist
-        n_bins = int(12 * np.log2(max_freq / fmin))  # Calculate bins for this range
-        n_bins = min(n_bins, 84)  # Cap at 7 octaves maximum
-        
-        # Use enhanced CQT with safe parameters
+        # Use enhanced CQT with better parameters
         cqt = np.abs(librosa.cqt(
             y=y_processed, sr=sr,
-            hop_length=self.hop_length,  # Use standard hop length
-            fmin=fmin,
-            n_bins=n_bins,
+            hop_length=self.hop_length // 2,  # Better time resolution
+            fmin=librosa.note_to_hz('C2'),    # Start from C2 (65.4 Hz)
+            n_bins=96,                        # 8 octaves for better range
             bins_per_octave=12,
-            filter_scale=1,
-            sparsity=0.01
+            filter_scale=1,                   # Better frequency resolution
+            sparsity=0.01                     # Reduce noise
         ))
         
         # Apply spectral normalization for consistent analysis
@@ -121,11 +104,11 @@ class MP3ToMIDIConverter:
         # Apply temporal smoothing to reduce noise
         cqt_smooth = gaussian_filter(cqt_norm, sigma=(0.5, 1.0))
         
-        # Get time frames
+        # Get time frames with higher resolution
         times = librosa.frames_to_time(
             np.arange(cqt_smooth.shape[1]), 
             sr=sr, 
-            hop_length=self.hop_length
+            hop_length=self.hop_length // 2
         )
         
         return cqt_smooth, times
@@ -174,20 +157,13 @@ class MP3ToMIDIConverter:
         mean_energy = np.mean(chroma_smooth)
         
         # Adjust sensitivity based on user setting
-        base_threshold = 0.001 + (1 - self.sensitivity) * 0.01
-        adaptive_threshold = max(base_threshold, mean_energy * 0.1)  # Lower multiplier
-        
-        print(f"DEBUG Chroma: max={global_max:.4f}, mean={mean_energy:.4f}, threshold={adaptive_threshold:.4f}")
-        
-        frame_count = 0
-        valid_frames = 0
+        base_threshold = 0.01 + (1 - self.sensitivity) * 0.05
+        adaptive_threshold = max(base_threshold, mean_energy * 0.3)
         
         # Process each time frame
         for i, time in enumerate(times[:-1]):
             frame_chroma = chroma_smooth[:, i]
             duration = times[i+1] - time
-            
-            frame_count += 1
             
             if duration < self.min_duration:
                 continue
@@ -195,21 +171,12 @@ class MP3ToMIDIConverter:
             # Dynamic threshold for this frame
             max_chroma = np.max(frame_chroma)
             if max_chroma > adaptive_threshold:
-                valid_frames += 1
-                
-                # Find peaks with very low adaptive height
-                peak_threshold = max_chroma * (0.05 + self.sensitivity * 0.1)  # Much lower threshold
+                # Find peaks with adaptive height
                 peaks, properties = find_peaks(
                     frame_chroma, 
-                    height=peak_threshold,
+                    height=max_chroma * (0.1 + self.sensitivity * 0.3),
                     distance=1
                 )
-                
-                if i < 10:  # Debug first 10 frames
-                    print(f"DEBUG Frame {i}: max={max_chroma:.4f}, threshold={peak_threshold:.4f}, peaks={len(peaks)}")
-                    if len(peaks) > 0:
-                        print(f"  Peak values: {frame_chroma[peaks]}")
-                        print(f"  Peak indices (notes): {peaks}")
                 
                 # Limit polyphony
                 if len(peaks) > self.max_polyphony:
@@ -256,62 +223,40 @@ class MP3ToMIDIConverter:
         # Apply median filter to reduce noise
         cqt_filtered = median_filter(cqt, size=(1, 3))
         
-        # Adaptive threshold based on signal characteristics
-        global_max = np.max(cqt_filtered)
-        mean_energy = np.mean(cqt_filtered)
-        
-        # Adjust sensitivity based on user setting
-        base_threshold = 0.0001 + (1 - self.sensitivity) * 0.001  # Much lower base
-        adaptive_threshold = max(base_threshold, mean_energy * 0.05)  # Lower multiplier
-        
-        print(f"DEBUG CQT: max={global_max:.4f}, mean={mean_energy:.4f}, threshold={adaptive_threshold:.4f}")
-        
         # Process each time frame
         for i, time in enumerate(times[:-1]):
             frame_cqt = cqt_filtered[:, i]
             duration = times[i+1] - time
             
-            if duration < self.min_duration:
+            if duration < min_duration:
                 continue
             
             max_cqt = np.max(frame_cqt)
-            if max_cqt > adaptive_threshold:
-                # Find peaks in the CQT with very low adaptive thresholding
-                peak_threshold = max_cqt * (0.05 + self.sensitivity * 0.1)  # Much lower threshold
+            if max_cqt > 0.001:  # Very low threshold
+                # Find peaks in the CQT
                 peaks, properties = find_peaks(
                     frame_cqt, 
-                    height=peak_threshold,
-                    distance=1
+                    height=max_cqt * 0.1,  # Lower threshold
+                    distance=1  # Allow closer peaks
                 )
-                
-                print(f"DEBUG CQT Frame {i}: max={max_cqt:.4f}, threshold={peak_threshold:.4f}, peaks={len(peaks)}")
-                
-                # Limit polyphony
-                if len(peaks) > self.max_polyphony:
-                    # Keep only the strongest peaks
-                    peak_heights = frame_cqt[peaks]
-                    top_indices = np.argsort(peak_heights)[-self.max_polyphony:]
-                    peaks = peaks[top_indices]
                 
                 for peak in peaks:
                     # Convert CQT bin to MIDI note
-                    # CQT starts at C2 (MIDI 36) with 12 bins per octave
-                    midi_note = 36 + peak  # C2 is MIDI note 36
+                    # CQT starts at C1 (MIDI 24) with 12 bins per octave
+                    midi_note = 24 + peak
                     
                     if 21 <= midi_note <= 108:  # Valid piano range
                         # Calculate velocity based on peak height
-                        relative_strength = frame_cqt[peak] / max_cqt
                         velocity = int(velocity_range[0] + 
                                       (velocity_range[1] - velocity_range[0]) * 
-                                      relative_strength)
+                                      (frame_cqt[peak] / max_cqt))
                         
                         notes.append({
                             'note': midi_note,
                             'start': time,
                             'duration': duration,
-                            'velocity': max(20, min(127, velocity)),
-                            'channel': 0,
-                            'confidence': relative_strength
+                            'velocity': max(30, min(127, velocity)),
+                            'channel': 0
                         })
         
         return notes
@@ -835,7 +780,6 @@ class MP3ToMIDIConverter:
         }
 
 
-
 # Standalone conversion function
 def convert_mp3_to_midi_simple(mp3_path: str, midi_path: str, algorithm: str = 'cqt') -> bool:
     """Simple function for MP3 to MIDI conversion"""
@@ -843,6 +787,7 @@ def convert_mp3_to_midi_simple(mp3_path: str, midi_path: str, algorithm: str = '
     return converter.convert_mp3_to_midi(mp3_path, midi_path, algorithm)
 
 
+# Test function
 if __name__ == "__main__":
     import random
     
@@ -855,331 +800,3 @@ if __name__ == "__main__":
     # converter.convert_mp3_to_midi("test.mp3", "output.mid", "cqt")
     
     print("✅ MP3 to MIDI Converter ready for use!")
-
-    def generate_inspired_melody(self, analysis: dict, duration: float = 30.0, 
-                                style: str = 'similar') -> List[dict]:
-        """Generate new melody inspired by audio analysis characteristics"""
-        self._update_progress(0.1, f"Generating {style} melody based on audio analysis...")
-        
-        notes = []
-        tempo = analysis.get('tempo', 120)
-        key_signature = self._detect_key_signature(analysis)
-        scale_notes = self._get_scale_notes(key_signature, style)
-        
-        # Calculate timing parameters
-        beat_duration = 60.0 / tempo
-        total_beats = duration / beat_duration
-        
-        # Generate note sequence based on audio characteristics
-        current_time = 0.0
-        
-        while current_time < duration:
-            # Note selection based on style and analysis
-            if style == 'similar':
-                note = self._generate_similar_note(analysis, scale_notes, current_time)
-            elif style == 'jazz':
-                note = self._generate_jazz_note(analysis, scale_notes, current_time)
-            elif style == 'classical':
-                note = self._generate_classical_note(analysis, scale_notes, current_time)
-            elif style == 'ambient':
-                note = self._generate_ambient_note(analysis, scale_notes, current_time)
-            else:
-                note = self._generate_creative_note(analysis, scale_notes, current_time)
-            
-            if note:
-                notes.append(note)
-                current_time = note['start'] + note['duration']
-            else:
-                current_time += beat_duration * 0.5  # Small step forward
-        
-        self._update_progress(1.0, f"Generated {len(notes)} notes in {style} style")
-        return notes
-    
-    def _detect_key_signature(self, analysis: dict) -> str:
-        """Detect likely key signature from audio analysis"""
-        # Simple key detection based on chroma complexity and harmonic ratio
-        complexity = analysis.get('chroma_complexity', 0.1)
-        harmonic_ratio = analysis.get('harmonic_ratio', 0.5)
-        
-        # Major keys for simpler, more harmonic content
-        if complexity < 0.1 and harmonic_ratio > 0.6:
-            return random.choice(['C', 'G', 'D', 'A', 'F'])
-        # Minor keys for more complex content
-        elif complexity > 0.15:
-            return random.choice(['Am', 'Em', 'Bm', 'Dm', 'Fm'])
-        else:
-            return random.choice(['C', 'Am', 'G', 'Em'])
-    
-    def _get_scale_notes(self, key: str, style: str) -> List[int]:
-        """Get scale notes for given key and style"""
-        # Base notes for different keys (MIDI note numbers)
-        key_bases = {
-            'C': 60, 'C#': 61, 'D': 62, 'D#': 63, 'E': 64, 'F': 65,
-            'F#': 66, 'G': 67, 'G#': 68, 'A': 69, 'A#': 70, 'B': 71,
-            'Am': 57, 'A#m': 58, 'Bm': 59, 'Cm': 60, 'C#m': 61, 'Dm': 62,
-            'D#m': 63, 'Em': 64, 'Fm': 65, 'F#m': 66, 'Gm': 67, 'G#m': 68
-        }
-        
-        base = key_bases.get(key, 60)
-        
-        # Scale patterns
-        if style == 'jazz':
-            # Jazz scales with extensions
-            pattern = [0, 2, 4, 5, 7, 9, 11, 12, 14, 16]  # Major with extensions
-        elif style == 'ambient':
-            # Pentatonic for ambient
-            pattern = [0, 2, 5, 7, 9, 12, 14, 17, 19, 21]
-        elif 'm' in key:
-            # Natural minor scale
-            pattern = [0, 2, 3, 5, 7, 8, 10, 12, 14, 15]
-        else:
-            # Major scale
-            pattern = [0, 2, 4, 5, 7, 9, 11, 12, 14, 16]
-        
-        # Generate notes across multiple octaves
-        scale_notes = []
-        for octave in [-12, 0, 12, 24]:
-            for interval in pattern:
-                note = base + octave + interval
-                if 21 <= note <= 108:  # Valid MIDI range
-                    scale_notes.append(note)
-        
-        return scale_notes
-    
-    def _generate_similar_note(self, analysis: dict, scale_notes: List[int], 
-                              current_time: float) -> dict:
-        """Generate note similar to original audio characteristics"""
-        tempo = analysis.get('tempo', 120)
-        onset_density = analysis.get('onset_density', 2.0)
-        harmonic_ratio = analysis.get('harmonic_ratio', 0.5)
-        
-        # Duration based on onset density
-        if onset_density > 3:
-            duration = random.uniform(0.2, 0.5)  # Faster notes
-        elif onset_density < 1:
-            duration = random.uniform(1.0, 2.0)  # Slower notes
-        else:
-            duration = random.uniform(0.4, 0.8)  # Medium notes
-        
-        # Note selection weighted by harmonic content
-        if harmonic_ratio > 0.7:
-            # Prefer chord tones
-            note = random.choice(scale_notes[::2])  # Every other note (chord tones)
-        else:
-            # More variety
-            note = random.choice(scale_notes)
-        
-        velocity = random.randint(60, 100)
-        
-        return {
-            'note': note,
-            'start': current_time,
-            'duration': duration,
-            'velocity': velocity,
-            'channel': 0
-        }
-    
-    def _generate_jazz_note(self, analysis: dict, scale_notes: List[int], 
-                           current_time: float) -> dict:
-        """Generate jazz-style note"""
-        # Jazz characteristics: swing, extended chords, syncopation
-        duration = random.choice([0.25, 0.5, 0.75, 1.0, 1.5])  # Swing-like durations
-        
-        # Favor 7ths, 9ths, and chromatic approaches
-        note = random.choice(scale_notes)
-        if random.random() < 0.3:  # 30% chance of chromatic approach
-            note += random.choice([-1, 1])
-            note = max(21, min(108, note))
-        
-        velocity = random.randint(70, 110)  # Generally louder for jazz
-        
-        return {
-            'note': note,
-            'start': current_time,
-            'duration': duration,
-            'velocity': velocity,
-            'channel': 0
-        }
-    
-    def _generate_classical_note(self, analysis: dict, scale_notes: List[int], 
-                                current_time: float) -> dict:
-        """Generate classical-style note"""
-        # Classical characteristics: structured, melodic, dynamic
-        duration = random.choice([0.5, 1.0, 1.5, 2.0])  # More structured durations
-        
-        # Prefer stepwise motion
-        note = random.choice(scale_notes[:len(scale_notes)//2])  # Middle range
-        
-        # Dynamic variety
-        velocity = random.randint(50, 95)
-        
-        return {
-            'note': note,
-            'start': current_time,
-            'duration': duration,
-            'velocity': velocity,
-            'channel': 0
-        }
-    
-    def _generate_ambient_note(self, analysis: dict, scale_notes: List[int], 
-                              current_time: float) -> dict:
-        """Generate ambient-style note"""
-        # Ambient characteristics: sustained, floating, sparse
-        duration = random.uniform(2.0, 8.0)  # Long, sustained notes
-        
-        # Prefer higher register and consonant intervals
-        note = random.choice(scale_notes[len(scale_notes)//2:])  # Upper range
-        
-        velocity = random.randint(40, 70)  # Softer dynamics
-        
-        return {
-            'note': note,
-            'start': current_time,
-            'duration': duration,
-            'velocity': velocity,
-            'channel': 0
-        }
-    
-    def _generate_creative_note(self, analysis: dict, scale_notes: List[int], 
-                               current_time: float) -> dict:
-        """Generate creative/experimental note"""
-        # Creative characteristics: unexpected rhythms, wide intervals
-        duration = random.choice([0.125, 0.25, 0.75, 1.5, 3.0])  # Varied durations
-        
-        # Allow wider range and more variety
-        note = random.choice(scale_notes)
-        if random.random() < 0.2:  # 20% chance of octave jump
-            note += random.choice([-12, 12])
-            note = max(21, min(108, note))
-        
-        velocity = random.randint(30, 120)  # Wide dynamic range
-        
-        return {
-            'note': note,
-            'start': current_time,
-            'duration': duration,
-            'velocity': velocity,
-            'channel': 0
-        }
-    
-    def generate_harmony(self, melody_notes: List[dict], analysis: dict) -> List[dict]:
-        """Generate harmonic accompaniment for a melody"""
-        self._update_progress(0.5, "Generating harmonic accompaniment...")
-        
-        harmony_notes = []
-        key = self._detect_key_signature(analysis)
-        chord_progression = self._generate_chord_progression(key, len(melody_notes))
-        
-        # Group melody notes by time segments for chord changes
-        chord_duration = 2.0  # 2 seconds per chord
-        current_chord_idx = 0
-        
-        for note in melody_notes:
-            chord_idx = int(note['start'] // chord_duration) % len(chord_progression)
-            chord = chord_progression[chord_idx]
-            
-            # Add chord tones as harmony
-            for i, chord_tone in enumerate(chord):
-                harmony_note = {
-                    'note': chord_tone,
-                    'start': note['start'],
-                    'duration': min(note['duration'] * 2, chord_duration),
-                    'velocity': max(30, note['velocity'] - 20 - i * 5),  # Softer than melody
-                    'channel': 1  # Different channel for harmony
-                }
-                harmony_notes.append(harmony_note)
-        
-        return harmony_notes
-    
-    def _generate_chord_progression(self, key: str, num_chords: int) -> List[List[int]]:
-        """Generate a chord progression in the given key"""
-        # Common chord progressions
-        progressions = {
-            'major': [
-                [0, 4, 7],      # I (major)
-                [5, 9, 12],     # vi (minor)
-                [2, 5, 9],      # ii (minor)
-                [7, 11, 14]     # V (major)
-            ],
-            'minor': [
-                [0, 3, 7],      # i (minor)
-                [5, 8, 12],     # iv (minor)
-                [7, 11, 14],    # V (major)
-                [3, 7, 10]      # bIII (major)
-            ]
-        }
-        
-        key_base = {'C': 60, 'G': 67, 'D': 62, 'A': 69, 'F': 65, 
-                    'Am': 57, 'Em': 64, 'Dm': 62, 'Bm': 59, 'Fm': 65}.get(key, 60)
-        
-        is_minor = 'm' in key
-        chord_templates = progressions['minor' if is_minor else 'major']
-        
-        # Generate chord progression
-        chords = []
-        for i in range(max(4, num_chords // 10)):  # At least 4 chords
-            template = chord_templates[i % len(chord_templates)]
-            chord = [key_base + interval for interval in template]
-            chords.append(chord)
-        
-        return chords
-    
-    def create_variations(self, original_notes: List[dict], num_variations: int = 3) -> List[List[dict]]:
-        """Create musical variations of the original notes"""
-        self._update_progress(0.3, f"Creating {num_variations} variations...")
-        
-        variations = []
-        
-        for i in range(num_variations):
-            if i == 0:
-                # Rhythmic variation
-                varied_notes = self._apply_rhythmic_variation(original_notes)
-            elif i == 1:
-                # Melodic variation (transposition and intervals)
-                varied_notes = self._apply_melodic_variation(original_notes)
-            else:
-                # Dynamic and articulation variation
-                varied_notes = self._apply_dynamic_variation(original_notes)
-            
-            variations.append(varied_notes)
-        
-        return variations
-    
-    def _apply_rhythmic_variation(self, notes: List[dict]) -> List[dict]:
-        """Apply rhythmic variation to notes"""
-        varied = []
-        for note in notes:
-            new_note = note.copy()
-            # Vary duration and timing slightly
-            new_note['duration'] *= random.uniform(0.7, 1.4)
-            new_note['start'] += random.uniform(-0.1, 0.1)
-            varied.append(new_note)
-        return varied
-    
-    def _apply_melodic_variation(self, notes: List[dict]) -> List[dict]:
-        """Apply melodic variation to notes"""
-        varied = []
-        transpose = random.choice([-7, -5, -3, 3, 5, 7])  # Transpose by interval
-        
-        for note in notes:
-            new_note = note.copy()
-            new_note['note'] = max(21, min(108, note['note'] + transpose))
-            # Occasionally add octave jumps
-            if random.random() < 0.1:
-                new_note['note'] += random.choice([-12, 12])
-                new_note['note'] = max(21, min(108, new_note['note']))
-            varied.append(new_note)
-        return varied
-    
-    def _apply_dynamic_variation(self, notes: List[dict]) -> List[dict]:
-        """Apply dynamic and articulation variation"""
-        varied = []
-        for note in notes:
-            new_note = note.copy()
-            # Vary velocity
-            new_note['velocity'] = max(20, min(127, note['velocity'] + random.randint(-20, 20)))
-            # Occasionally make staccato
-            if random.random() < 0.2:
-                new_note['duration'] *= 0.5
-            varied.append(new_note)
-        return varied
